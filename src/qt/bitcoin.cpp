@@ -46,7 +46,16 @@ static QSplashScreen *splashref;
 
 static void ThreadSafeMessageBox(const std::string& message, const std::string& caption, int style)
 {
-    // Message from network thread
+    // Always log — previously GUI-path errors never reached debug.log.
+    printf("%s: %s\n", caption.c_str(), message.c_str());
+    fprintf(stderr, "%s: %s\n", caption.c_str(), message.c_str());
+
+    // Hide splash so modal dialogs are not covered / missed.
+    if (splashref) {
+        splashref->hide();
+        QApplication::instance()->processEvents();
+    }
+
     if(guiref)
     {
         bool modal = (style & CClientUIInterface::MODAL);
@@ -56,11 +65,6 @@ static void ThreadSafeMessageBox(const std::string& message, const std::string& 
                                    Q_ARG(QString, QString::fromStdString(caption)),
                                    Q_ARG(QString, QString::fromStdString(message)),
                                    Q_ARG(bool, modal));
-    }
-    else
-    {
-        printf("%s: %s\n", caption.c_str(), message.c_str());
-        fprintf(stderr, "%s: %s\n", caption.c_str(), message.c_str());
     }
 }
 
@@ -173,6 +177,7 @@ int main(int argc, char *argv[])
             else {
                 // Re-apply saved data directory for this session
                 mapArgs["-datadir"] = configuredDir.toStdString();
+                ClearDatadirCache();
             }
         }
 
@@ -339,6 +344,21 @@ int main(int argc, char *argv[])
         }
         else
         {
+            if (splashref) {
+                splash.hide();
+                splashref = 0;
+            }
+            // InitError() already showed a dialog when it set strMiscWarning.
+            // Only show a fallback when AppInit2 failed without a recorded message.
+            if (strMiscWarning.empty()) {
+                QMessageBox::critical(0, "POS",
+                    QObject::tr("POS failed to initialize. Check debug.log in the data directory "
+                       "(%APPDATA%\\POS on Windows) for details.\n\n"
+                       "Common causes:\n"
+                       "- Another POS process is already running (posd.exe or pos-qt.exe)\n"
+                       "- Stale lock file: close all POS windows, then delete .lock in the data folder\n"
+                       "- Corrupted wallet.dat / database files"));
+            }
             return 1;
         }
     } catch (std::exception& e) {
