@@ -300,8 +300,12 @@ build_openssl() {
 }
 
 build_bdb() {
-    local marker="$DEPS/.bdb.ok"
+    # Marker versioned so a broken pre-patch libdb (missing atomic_init_db rename
+    # in mp_region.c) is rebuilt automatically after script fixes.
+    local marker="$DEPS/.bdb.ok.v2"
     [[ -f "$marker" ]] && { log "Berkeley DB already built"; return 0; }
+    # Drop stale success markers / libs from older script revisions
+    rm -f "$DEPS/.bdb.ok"
     mkdir -p "$SRC_DEPS"
     cd "$SRC_DEPS"
     local tarball="db-${BDB_VER}.NC.tar.gz"
@@ -315,14 +319,25 @@ build_bdb() {
     tar xzf "$tarball"
     cd "db-${BDB_VER}.NC"
 
-    # GCC atomic helpers clash with BDB's own atomic_init / compare_exchange names.
-    if [[ -f src/dbinc/atomic.h ]]; then
-        sed -i 's/__atomic_compare_exchange/__atomic_compare_exchange_db/g' src/dbinc/atomic.h || true
-        sed -i 's/atomic_init/atomic_init_db/g' src/dbinc/atomic.h src/mp/mp_mvcc.c src/mp/mp_fget.c src/mutex/mut_method.c src/mutex/mut_tas.c 2>/dev/null || true
-    elif [[ -f dbinc/atomic.h ]]; then
-        sed -i 's/__atomic_compare_exchange/__atomic_compare_exchange_db/g' dbinc/atomic.h || true
-        sed -i 's/atomic_init/atomic_init_db/g' dbinc/atomic.h mp/mp_mvcc.c mp/mp_fget.c mutex/mut_method.c mutex/mut_tas.c 2>/dev/null || true
+    # GCC/C11 atomic helpers clash with BDB's own atomic_init name.
+    # Rename the macro and EVERY call site (including mp_region.c), otherwise
+    # linking fails with: undefined reference to `atomic_init'
+    log "Patching Berkeley DB atomic_init → atomic_init_db (all sources)"
+    while IFS= read -r -d '' f; do
+        sed -i \
+            -e 's/__atomic_compare_exchange/__atomic_compare_exchange_db/g' \
+            -e 's/atomic_init(/atomic_init_db(/g' \
+            "$f"
+    done < <(find . \( -name '*.c' -o -name '*.h' \) -print0 2>/dev/null)
+    # Sanity: no bare atomic_init( calls should remain
+    if grep -R --include='*.c' --include='*.h' -n 'atomic_init(' . 2>/dev/null \
+        | grep -v 'atomic_init_db(' >/dev/null; then
+        warn "Some atomic_init( call sites may remain unpatched:"
+        grep -R --include='*.c' --include='*.h' -n 'atomic_init(' . 2>/dev/null \
+            | grep -v 'atomic_init_db(' || true
     fi
+    # Macro definition form: #define atomic_init(p, val)  (already handled via atomic_init()
+    # Also catch "#define\tatomic_init" without paren on same sed — covered by atomic_init(
 
     # Linux MinGW headers are lowercase (winioctl.h). BDB 5.x/6.x use WinIoCtl.h
     # which fails on case-sensitive filesystems with:
@@ -347,12 +362,23 @@ build_bdb() {
     make install_lib install_include || {
         mkdir -p "$DEPS/lib" "$DEPS/include"
         cp .libs/libdb*.a "$DEPS/lib/" 2>/dev/null || cp libdb*.a "$DEPS/lib/"
-        cp ../src/db.h ../src/db_cxx.h "$DEPS/include/"
-        cp -a ../src/dbinc "$DEPS/include/" 2>/dev/null || true
+        # 4.8.NC flat layout vs classic src/ layout
+        if [[ -f ../db.h ]]; then
+            cp ../db.h ../db_cxx.h "$DEPS/include/" 2>/dev/null || true
+            cp -a ../dbinc "$DEPS/include/" 2>/dev/null || true
+        else
+            cp ../src/db.h ../src/db_cxx.h "$DEPS/include/"
+            cp -a ../src/dbinc "$DEPS/include/" 2>/dev/null || true
+        fi
     }
     if [[ ! -f "$DEPS/lib/libdb_cxx.a" ]]; then
         find . -name 'libdb_cxx*.a' -exec cp {} "$DEPS/lib/libdb_cxx.a" \;
         find . -name 'libdb-*.a' -o -name 'libdb.a' | head -1 | while read -r f; do cp "$f" "$DEPS/lib/libdb.a"; done
+    fi
+    verify_file "$DEPS/lib/libdb_cxx.a" "Berkeley DB libdb_cxx.a missing after install"
+    # Confirm the bad symbol is gone (calls should be atomic_init_db)
+    if "${TARGET}-nm" "$DEPS/lib/libdb_cxx.a" 2>/dev/null | grep -E ' U atomic_init$' >/dev/null; then
+        die "libdb_cxx.a still has undefined atomic_init — BDB atomic patch incomplete"
     fi
     touch "$marker"
 }
