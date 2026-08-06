@@ -31,9 +31,22 @@ need_cmd() {
 
 sudo_run() {
   if [[ ${EUID} -eq 0 ]]; then
-    env "$@"
+    "$@"
   else
-    sudo env "$@"
+    sudo -- "$@"
+  fi
+}
+
+apt_update() {
+  sudo_run apt-get update "$@"
+}
+
+apt_install() {
+  # Always noninteractive; do not pass VAR=value through sudo_run (breaks as root).
+  if [[ ${EUID} -eq 0 ]]; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"
+  else
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"
   fi
 }
 
@@ -75,15 +88,15 @@ ensure_packages() {
     log "Installing missing packages: ${missing[*]}"
     # --allow-releaseinfo-change: accept Label/Codename changes from third-party
     # PPAs (e.g. ondrej/php) so apt-get update does not abort the build.
-    if ! sudo_run apt-get update --allow-releaseinfo-change; then
+    if ! apt_update --allow-releaseinfo-change; then
       warn "apt-get update reported errors (often unrelated PPAs). Retrying with allow-releaseinfo-change-*"
-      sudo_run apt-get update \
+      apt_update \
         --allow-releaseinfo-change-label \
         --allow-releaseinfo-change-version \
         --allow-releaseinfo-change-suite || \
         warn "apt-get update still failed; attempting install from existing package indexes"
     fi
-    sudo_run DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+    apt_install "${missing[@]}"
   else
     log "Required apt packages already installed."
   fi
