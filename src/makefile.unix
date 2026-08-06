@@ -92,10 +92,10 @@ endif
 
 # CXXFLAGS can be specified on the make command line, so we use xCXXFLAGS that only
 # adds some defaults in front. Unfortunately, CXXFLAGS=... $(CXXFLAGS) does not work.
-# -std=c++11: required on Ubuntu 22.04/24.04/26.04 (GCC 11+/13+/15+)
+# -std=c++17: required for modern Boost / Ubuntu 18.04–26.04 (use g++-8 on 18.04)
 # OPENSSL_SUPPRESS_DEPRECATED: allow legacy SHA256_* / AES APIs on OpenSSL 3.x
-xCXXFLAGS=-O2 -std=c++11 $(EXT_OPTIONS) -pthread -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter \
-    -DOPENSSL_SUPPRESS_DEPRECATED \
+xCXXFLAGS=-O2 -std=c++17 $(EXT_OPTIONS) -pthread -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter \
+    -DOPENSSL_SUPPRESS_DEPRECATED -Wno-deprecated-declarations -Wno-deprecated-copy \
     $(DEBUGFLAGS) $(DEFS) $(HARDENING) $(CXXFLAGS)
 
 # LDFLAGS can be specified on the make command line, so we use xLDFLAGS that only
