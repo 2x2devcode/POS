@@ -233,6 +233,7 @@ std::string HelpMessage()
         "  -conf=<file>           " + _("Specify configuration file (default: pos.conf)") + "\n" +
         "  -pid=<file>            " + _("Specify pid file (default: posd.pid)") + "\n" +
         "  -datadir=<dir>         " + _("Specify data directory") + "\n" +
+        "  -choosedatadir         " + _("Offer data directory selection dialog on GUI startup (default: 0)") + "\n" +
         "  -wallet=<dir>          " + _("Specify wallet file (within data directory)") + "\n" +
         "  -dbcache=<n>           " + _("Set database cache size in megabytes (default: 25)") + "\n" +
         "  -dblogsize=<n>         " + _("Set database disk log size in megabytes (default: 100)") + "\n" +

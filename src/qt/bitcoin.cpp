@@ -7,10 +7,15 @@
 #include "optionsmodel.h"
 #include "guiutil.h"
 #include "guiconstants.h"
+#include "introdialog.h"
 
 #include "init.h"
 #include "ui_interface.h"
 #include "qtipcserver.h"
+#include "util.h"
+
+#include <boost/filesystem.hpp>
+#include <boost/filesystem/fstream.hpp>
 
 #include <QApplication>
 #include <QMessageBox>
@@ -19,6 +24,10 @@
 #include <QTranslator>
 #include <QSplashScreen>
 #include <QLibraryInfo>
+#include <QSettings>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 
 #if defined(BITCOIN_NEED_QT_PLUGINS) && !defined(_BITCOIN_QT_PLUGINS_INCLUDED)
 #define _BITCOIN_QT_PLUGINS_INCLUDED
@@ -131,25 +140,98 @@ int main(int argc, char *argv[])
     // Command-line options take precedence:
     ParseParameters(argc, argv);
 
-    // ... then bitcoin.conf:
-    if (!boost::filesystem::is_directory(GetDataDir(false)))
-    {
-        // This message can not be translated, as translation is not initialized yet
-        // (which not yet possible because lang=XX can be overridden in bitcoin.conf in the data directory)
-        QMessageBox::critical(0, "POS",
-                              QString("Error: Specified data directory \"%1\" does not exist.").arg(QString::fromStdString(mapArgs["-datadir"])));
-        return 1;
-    }
-    ReadConfigFile(mapArgs, mapMultiArgs);
-
-    // Application identification (must be set before OptionsModel is initialized,
-    // as it is used to locate QSettings)
+    // Application identification (must be set before QSettings / OptionsModel)
     app.setOrganizationName("POS");
-    //XXX app.setOrganizationDomain("");
-    if(GetBoolArg("-testnet")) // Separate UI settings for testnet
+    if (GetBoolArg("-testnet"))
         app.setApplicationName("POS-Qt-testnet");
     else
         app.setApplicationName("POS-Qt");
+
+    // First-run / missing data directory setup (English UI).
+    // Choose wallet data folder and optional bootstrap.dat location before
+    // any GetDataDir() call so the path is not auto-created elsewhere.
+    {
+        const bool fCliDataDir = mapArgs.count("-datadir") > 0;
+        QSettings settings;
+        QString configuredDir = settings.value("strDataDir").toString();
+        bool needIntro = false;
+
+        if (fCliDataDir) {
+            QString cliDir = QString::fromStdString(mapArgs["-datadir"]);
+            if (!QDir(cliDir).exists()) {
+                QMessageBox::critical(0, "POS",
+                    QString("Error: Specified data directory \"%1\" does not exist.").arg(cliDir));
+                return 1;
+            }
+        } else {
+            if (GetBoolArg("-choosedatadir", false))
+                needIntro = true;
+            else if (configuredDir.isEmpty())
+                needIntro = true; // first run — no saved folder
+            else if (!QDir(configuredDir).exists())
+                needIntro = true; // saved folder missing — ask again
+            else {
+                // Re-apply saved data directory for this session
+                mapArgs["-datadir"] = configuredDir.toStdString();
+            }
+        }
+
+        if (needIntro) {
+            IntroDialog intro;
+            if (!configuredDir.isEmpty())
+                intro.setDataDirectory(configuredDir);
+            else
+                intro.setDataDirectory(QString::fromStdString(GetDefaultDataDir().string()));
+
+            if (intro.exec() != QDialog::Accepted)
+                return 1;
+
+            QString dataDir = intro.dataDirectory();
+            if (!QDir().mkpath(dataDir)) {
+                QMessageBox::critical(0, "POS",
+                    QString("Error: Could not create data directory \"%1\".").arg(dataDir));
+                return 1;
+            }
+
+            settings.setValue("strDataDir", dataDir);
+            mapArgs["-datadir"] = dataDir.toStdString();
+            ClearDatadirCache();
+
+            // Optional bootstrap: copy bootstrap.dat into the data directory
+            // so AppInit2() imports it automatically.
+            QString bootstrapSrc = intro.bootstrapFile();
+            if (!bootstrapSrc.isEmpty()) {
+                QString bootstrapDest = QDir(dataDir).filePath("bootstrap.dat");
+                // If testnet, core uses GetDataDir() which appends /testnet —
+                // create that subdir and place the file there when needed.
+                if (GetBoolArg("-testnet", false)) {
+                    QString testnetDir = QDir(dataDir).filePath("testnet");
+                    QDir().mkpath(testnetDir);
+                    bootstrapDest = QDir(testnetDir).filePath("bootstrap.dat");
+                }
+                if (QFileInfo(bootstrapSrc).absoluteFilePath() != QFileInfo(bootstrapDest).absoluteFilePath()) {
+                    if (QFile::exists(bootstrapDest))
+                        QFile::remove(bootstrapDest);
+                    if (!QFile::copy(bootstrapSrc, bootstrapDest)) {
+                        QMessageBox::warning(0, "POS",
+                            QString("Warning: Could not copy bootstrap file to:\n%1\n\n"
+                                    "Continuing without automatic blockchain import.")
+                                .arg(bootstrapDest));
+                    }
+                }
+            }
+        }
+    }
+
+    // Ensure data directory exists before reading pos.conf
+    if (!boost::filesystem::is_directory(GetDataDir(false)))
+    {
+        QMessageBox::critical(0, "POS",
+                              QString("Error: Specified data directory \"%1\" does not exist.")
+                                  .arg(QString::fromStdString(mapArgs["-datadir"])));
+        return 1;
+    }
+    ReadConfigFile(mapArgs, mapMultiArgs);
 
     // ... then GUI settings:
     OptionsModel optionsModel;
