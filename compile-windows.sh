@@ -31,9 +31,9 @@ need_cmd() {
 
 sudo_run() {
   if [[ ${EUID} -eq 0 ]]; then
-    "$@"
+    env "$@"
   else
-    sudo "$@"
+    sudo env "$@"
   fi
 }
 
