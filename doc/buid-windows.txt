@@ -6,194 +6,140 @@ Distributed under the MIT/X11 software license.
 CROSS-COMPILE WINDOWS CLI + GUI ON UBUNTU 22.04
 ================================================================
 
-This document describes how to build Windows executables for POSCoin
-from an Ubuntu 22.04 host:
+Build Windows executables for POSCoin from an Ubuntu 22.04 host
+(also works with warnings on 24.04 / 26.04):
 
   - posd.exe      (headless CLI / daemon)
   - pos-qt.exe    (Qt5 GUI wallet)
 
-The automated script at the repository root does the same steps:
+Recommended: use the automated script (RNRC-style toolchain):
 
+  chmod +x compile-windows.sh
   ./compile-windows.sh
+
+Artifacts land in:
+
+  release/windows/posd.exe
+  release/windows/pos-qt.exe
+  release/windows/logs/   (full + stage logs)
 
 ----------------------------------------------------------------
 1. Host requirements
 ----------------------------------------------------------------
 
-  * Ubuntu 22.04 LTS (Jammy) recommended for this guide
-  * ~20 GB free disk space under /usr and the build directory
-  * Root/sudo privileges for package installs
-  * Network access to download OpenSSL, Berkeley DB, Boost and Qt
+  * Ubuntu 22.04 LTS (Jammy) — primary target
+  * ~20 GB free disk under the repo (depends/ + Qt)
+  * Root or sudo for package installs
+  * Network access (OpenSSL, Berkeley DB 4.8, Boost, Qt/MXE)
 
 ----------------------------------------------------------------
-2. Install host packages
+2. One-shot automated build
 ----------------------------------------------------------------
 
-  sudo dpkg --add-architecture i386
-  # Allow Label/Codename changes from third-party PPAs (e.g. ondrej/php):
-  sudo apt-get update --allow-releaseinfo-change
-  sudo apt-get install -y \
-    build-essential curl wget git pkg-config autoconf automake libtool \
-    cmake ninja-build python3 unzip zip \
-    g++-mingw-w64-i686 g++-mingw-w64-x86-64 \
-    mingw-w64 mingw-w64-tools \
-    libz-mingw-w64-dev
+  ./compile-windows.sh
 
-  If apt-get update fails only because a PPA changed its Label, accept it once:
+Environment overrides (optional):
 
-    sudo apt-get update --allow-releaseinfo-change
+  TARGET_ARCH=x86_64|i686   default x86_64
+  BUILD_GUI=0|1             default 1 (build CLI + GUI)
+  JOBS=N                    default nproc
+  DEPS_DIR=/path            default ./depends/<triple>
+  USE_UPNP=-                default - (UPnP off)
 
-  Or fix/remove the offending source under /etc/apt/sources.list.d/ and retry.
+Examples:
 
-  # Prefer POSIX threading model for MinGW (required by Boost/Qt)
-  sudo update-alternatives --set i686-w64-mingw32-g++ \
-    /usr/bin/i686-w64-mingw32-g++-posix
-  sudo update-alternatives --set i686-w64-mingw32-gcc \
-    /usr/bin/i686-w64-mingw32-gcc-posix
+  BUILD_GUI=0 ./compile-windows.sh          # CLI only
+  TARGET_ARCH=i686 ./compile-windows.sh     # 32-bit Windows
 
-----------------------------------------------------------------
-3. Dependency versions (32-bit MinGW)
-----------------------------------------------------------------
-
-Default paths used by src/makefile.linux-mingw and compile-windows.sh:
-
-  DEPSDIR=/usr/i686-w64-mingw32
-
-  OpenSSL     1.1.1w   -> $DEPSDIR/openssl-1.1.1w
-  Berkeley DB 6.0.20   -> $DEPSDIR/db-6.0.20
-  Boost       1.70.0   -> $DEPSDIR/boost_1_70_0
-  Qt          5.15.2   -> $DEPSDIR/qt-5.15.2  (for GUI only)
-  zlib        system mingw package
-
-These versions are known to work with the OpenSSL 1.1 API used by
-this codebase when cross-compiling. Native Linux builds use the
-system OpenSSL 3.x with the compatibility layer in src/openssl_compat.h.
+The script:
+  * Checks Ubuntu version
+  * Installs MinGW-w64 + host packages (apt; works as root or via sudo)
+  * Builds static deps into depends/<arch>-w64-mingw32/{include,lib}
+      zlib, OpenSSL 3.x, Berkeley DB 4.8.30.NC, Boost 1.82, miniupnpc
+  * Provisions Qt for mingw (MXE apt packages, or qtbase from source)
+  * Builds posd.exe and pos-qt.exe (fully static MinGW runtime)
+  * Copies binaries to release/windows/ and verifies no libstdc++/winpthread DLLs
 
 ----------------------------------------------------------------
-4. Build dependencies (manual)
+3. Dependency layout (matches makefile.linux-mingw)
 ----------------------------------------------------------------
 
-You can skip this section and run ./compile-windows.sh which builds
-and installs the same dependencies automatically.
+  depends/x86_64-w64-mingw32/
+    include/   openssl/  db.h db_cxx.h  boost/  zlib.h  miniupnpc/
+    lib/       libssl.a libcrypto.a libdb_cxx.a libboost_* libz.a ...
+    src/       downloaded sources
+    qt/        (only when building qtbase from source)
 
-4.1 OpenSSL 1.1.1w
+src/makefile.linux-mingw defaults:
 
-  cd /tmp
-  curl -LO https://www.openssl.org/source/openssl-1.1.1w.tar.gz
-  tar xzf openssl-1.1.1w.tar.gz
-  cd openssl-1.1.1w
-  ./Configure mingw \
-    --cross-compile-prefix=i686-w64-mingw32- \
-    --prefix=/usr/i686-w64-mingw32/openssl-1.1.1w \
-    no-shared no-asm
-  make -j$(nproc)
-  sudo make install_sw
-
-4.2 Berkeley DB 6.0.20
-
-  cd /tmp
-  curl -LO https://download.oracle.com/berkeley-db/db-6.0.20.tar.gz
-  tar xzf db-6.0.20.tar.gz
-  cd db-6.0.20/build_unix
-  ../dist/configure \
-    --host=i686-w64-mingw32 \
-    --enable-mingw \
-    --enable-cxx \
-    --disable-shared \
-    --prefix=/usr/i686-w64-mingw32/db-6.0.20
-  make -j$(nproc)
-  sudo make install
-
-4.3 Boost 1.70.0
-
-  cd /tmp
-  curl -LO https://archives.boost.io/release/1.70.0/source/boost_1_70_0.tar.bz2
-  tar xjf boost_1_70_0.tar.bz2
-  cd boost_1_70_0
-  ./bootstrap.sh
-  echo "using gcc : : i686-w64-mingw32-g++ ;" > user-config.jam
-  ./b2 --user-config=user-config.jam \
-    toolset=gcc target-os=windows threadapi=win32 \
-    link=static runtime-link=static \
-    --with-system --with-filesystem --with-program_options \
-    --with-thread --with-chrono \
-    stage -j$(nproc)
-  sudo mkdir -p /usr/i686-w64-mingw32/boost_1_70_0
-  sudo cp -a boost stage /usr/i686-w64-mingw32/boost_1_70_0/
-
-4.4 Qt 5.15.2 (GUI only)
-
-  Building Qt for MinGW is the longest step. The compile-windows.sh
-  script builds a minimal static Qt 5.15.2 (qtbase + qttools) for
-  i686-w64-mingw32. Expect 30–90 minutes depending on CPU.
+  TARGET_PLATFORM=x86_64
+  DEPSDIR=../depends/$(TARGET_PLATFORM)-w64-mingw32
 
 ----------------------------------------------------------------
-5. Build Windows CLI (posd.exe)
+4. Manual CLI rebuild (after deps exist)
 ----------------------------------------------------------------
 
-  cd /path/to/POS
   cd src
   make -f makefile.linux-mingw clean
   make -f makefile.linux-mingw -j$(nproc) \
-    DEPSDIR=/usr/i686-w64-mingw32 \
-    TARGET_PLATFORM=i686
+    TARGET_PLATFORM=x86_64 \
+    DEPSDIR=$PWD/../depends/x86_64-w64-mingw32
 
   Result: src/posd.exe
 
 ----------------------------------------------------------------
-6. Build Windows GUI (pos-qt.exe)
+5. Manual GUI rebuild (after deps + mingw qmake exist)
 ----------------------------------------------------------------
 
-  cd /path/to/POS
-  export PATH=/usr/i686-w64-mingw32/qt-5.15.2/bin:$PATH
-  i686-w64-mingw32-qmake-qt5 \
-    -spec win32-g++ \
-    USE_UPNP=- \
-    USE_QRCODE=0 \
-    BOOST_LIB_SUFFIX=-mt \
-    BOOST_INCLUDE_PATH=/usr/i686-w64-mingw32/boost_1_70_0 \
-    BOOST_LIB_PATH=/usr/i686-w64-mingw32/boost_1_70_0/stage/lib \
-    BDB_INCLUDE_PATH=/usr/i686-w64-mingw32/db-6.0.20/include \
-    BDB_LIB_PATH=/usr/i686-w64-mingw32/db-6.0.20/lib \
-    OPENSSL_INCLUDE_PATH=/usr/i686-w64-mingw32/openssl-1.1.1w/include \
-    OPENSSL_LIB_PATH=/usr/i686-w64-mingw32/openssl-1.1.1w/lib \
-    pos-qt.pro
-
+  mkdir -p build-win-qt && cd build-win-qt
+  /usr/lib/mxe/usr/bin/x86_64-w64-mingw32.static-qmake-qt5 \
+    USE_UPNP=- USE_QRCODE=0 RELEASE=1 MINGW_THREAD_BUGFIX=0 \
+    BOOST_LIB_SUFFIX=-mt-s-x64 \
+    BOOST_THREAD_LIB_SUFFIX=-mt-s-x64 \
+    BOOST_INCLUDE_PATH=$PWD/../depends/x86_64-w64-mingw32/include \
+    BOOST_LIB_PATH=$PWD/../depends/x86_64-w64-mingw32/lib \
+    BDB_INCLUDE_PATH=$PWD/../depends/x86_64-w64-mingw32/include \
+    BDB_LIB_PATH=$PWD/../depends/x86_64-w64-mingw32/lib \
+    OPENSSL_INCLUDE_PATH=$PWD/../depends/x86_64-w64-mingw32/include \
+    OPENSSL_LIB_PATH=$PWD/../depends/x86_64-w64-mingw32/lib \
+    "QMAKE_LFLAGS+=-static -static-libgcc -static-libstdc++" \
+    ../pos-qt.pro
   make -j$(nproc)
 
-  Result: release/pos-qt.exe  (or ./pos-qt.exe depending on qmake spec)
+  (Exact BOOST_*_SUFFIX is detected by compile-windows.sh from lib names.)
 
 ----------------------------------------------------------------
-7. Verify outputs
+6. Verify outputs
 ----------------------------------------------------------------
 
-  file src/posd.exe
-  # PE32 executable (console) Intel 80386, for MS Windows
+  file release/windows/posd.exe release/windows/pos-qt.exe
+  # PE32+ executable (console/GUI) x86-64, for MS Windows
 
-  i686-w64-mingw32-strip src/posd.exe
-  i686-w64-mingw32-strip release/pos-qt.exe
-
-----------------------------------------------------------------
-8. Automated build
-----------------------------------------------------------------
-
-  chmod +x compile-windows.sh
-  ./compile-windows.sh
-
-  The script:
-    * Checks that the host is Ubuntu 22.04 (warns otherwise)
-    * Verifies / installs MinGW and required packages
-    * Builds missing OpenSSL / BDB / Boost / Qt under DEPSDIR
-    * Updates include/lib paths in makefile.linux-mingw if needed
-    * Builds posd.exe and pos-qt.exe into dist/windows/
+  x86_64-w64-mingw32-objdump -p release/windows/posd.exe | grep -i 'DLL Name'
+  # Must NOT list libstdc++-6.dll / libwinpthread-1.dll / libgcc_s_*.dll
 
 ----------------------------------------------------------------
-9. Notes
+7. Apt / PPA notes
 ----------------------------------------------------------------
 
-  * Wallet.dat compatibility: Berkeley DB major version must match
-    the version used to create the wallet. Prefer DB 6.0 for Windows
-    releases produced by this guide.
-  * For 64-bit Windows, set TARGET_PLATFORM=x86_64 and rebuild deps
-    with x86_64-w64-mingw32-* toolchains (advanced).
+  If apt update fails because a third-party PPA changed its Label:
+
+    sudo apt-get update --allow-releaseinfo-change
+
+  The script already passes --allow-releaseinfo-change on update.
+
+----------------------------------------------------------------
+8. Notes
+----------------------------------------------------------------
+
+  * Wallet.dat: Windows builds use Berkeley DB 4.8.30.NC (same major as
+    classic Bitcoin/Peercoin-era wallets). Keep BDB major version matched
+    across platforms that must open the same wallet.dat.
+  * If an older BDB 6.x tree fails with `WinIoCtl.h: No such file`, patch it:
+
+      find path/to/db-* -name win_db.h -exec sed -i 's/WinIoCtl.h/winioctl.h/g' {} +
+
+    (The script applies this automatically for its depends/ build.)
   * Native Linux builds: see doc/build-unix.txt (Ubuntu 22.04/24.04/26.04).
+  * Based on the RNRC compile-windows.sh flow adapted for POS names
+    (posd.exe / pos-qt.exe / pos-qt.pro).

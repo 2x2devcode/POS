@@ -135,6 +135,11 @@ src/makefile.linux-mingw defaults:
   * Wallet.dat: Windows builds use Berkeley DB 4.8.30.NC (same major as
     classic Bitcoin/Peercoin-era wallets). Keep BDB major version matched
     across platforms that must open the same wallet.dat.
+  * If an older BDB 6.x tree fails with `WinIoCtl.h: No such file`, patch it:
+
+      find path/to/db-* -name win_db.h -exec sed -i 's/WinIoCtl.h/winioctl.h/g' {} +
+
+    (The script applies this automatically for its depends/ build.)
   * Native Linux builds: see doc/build-unix.txt (Ubuntu 22.04/24.04/26.04).
   * Based on the RNRC compile-windows.sh flow adapted for POS names
     (posd.exe / pos-qt.exe / pos-qt.pro).

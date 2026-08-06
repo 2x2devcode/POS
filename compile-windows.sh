@@ -314,10 +314,27 @@ build_bdb() {
     rm -rf "db-${BDB_VER}.NC"
     tar xzf "$tarball"
     cd "db-${BDB_VER}.NC"
+
+    # GCC atomic helpers clash with BDB's own atomic_init / compare_exchange names.
     if [[ -f src/dbinc/atomic.h ]]; then
         sed -i 's/__atomic_compare_exchange/__atomic_compare_exchange_db/g' src/dbinc/atomic.h || true
         sed -i 's/atomic_init/atomic_init_db/g' src/dbinc/atomic.h src/mp/mp_mvcc.c src/mp/mp_fget.c src/mutex/mut_method.c src/mutex/mut_tas.c 2>/dev/null || true
+    elif [[ -f dbinc/atomic.h ]]; then
+        sed -i 's/__atomic_compare_exchange/__atomic_compare_exchange_db/g' dbinc/atomic.h || true
+        sed -i 's/atomic_init/atomic_init_db/g' dbinc/atomic.h mp/mp_mvcc.c mp/mp_fget.c mutex/mut_method.c mutex/mut_tas.c 2>/dev/null || true
     fi
+
+    # Linux MinGW headers are lowercase (winioctl.h). BDB 5.x/6.x use WinIoCtl.h
+    # which fails on case-sensitive filesystems with:
+    #   fatal error: WinIoCtl.h: No such file or directory
+    while IFS= read -r -d '' win_db_h; do
+        sed -i \
+            -e 's/<WinIoCtl\.h>/<winioctl.h>/g' \
+            -e 's/"WinIoCtl\.h"/"winioctl.h"/g' \
+            "$win_db_h"
+        log "Patched MinGW header case in $win_db_h"
+    done < <(find . -name 'win_db.h' -print0 2>/dev/null)
+
     cd build_unix
     ../dist/configure \
         --disable-replication --enable-mingw --enable-cxx \
