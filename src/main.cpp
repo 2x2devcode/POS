@@ -2450,7 +2450,7 @@ bool CheckDiskSpace(uint64_t nAdditionalBytes)
         fShutdown = true;
         string strMessage = _("Warning: Disk space is low!");
         strMiscWarning = strMessage;
-        printf("*** %s (available=%"PRIu64" bytes)\n", strMessage.c_str(), nFreeBytesAvailable);
+        printf("*** %s (available=%" PRIu64 " bytes)\n", strMessage.c_str(), nFreeBytesAvailable);
         uiInterface.ThreadSafeMessageBox(strMessage, "POS", CClientUIInterface::OK | CClientUIInterface::ICON_EXCLAMATION | CClientUIInterface::MODAL);
         StartShutdown();
         return false;
