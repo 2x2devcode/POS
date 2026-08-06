@@ -27,4 +27,10 @@ using boost::placeholders::_5;
 # define BOOST_FS_IS_COMPLETE(p) ((p).is_complete())
 #endif
 
+/* C++17: with "using namespace std" + "using namespace boost", bare
+ * filesystem:: is ambiguous (std::filesystem vs boost::filesystem).
+ * Prefer Boost via an explicit alias in translation units that need it:
+ *   namespace filesystem = boost::filesystem;
+ * or qualify as boost::filesystem::. */
+
 #endif // BITCOIN_BOOST_COMPAT_H

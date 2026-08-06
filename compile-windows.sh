@@ -918,12 +918,10 @@ run_with_log() {
         main "$@"
         echo 0 > "$status_file"
     ) 2>&1 | tee -a "$LOG_FILE"
-    # If main died via `exit` (die), the status file may be missing
-    local rc
-    if [[ -f "$status_file" ]]; then
+    # If main died via `exit` (die), the status file is empty (mktemp creates it).
+    local rc=1
+    if [[ -s "$status_file" ]]; then
         rc="$(cat "$status_file")"
-    else
-        rc=1
     fi
     rm -f "$status_file"
     set -e
