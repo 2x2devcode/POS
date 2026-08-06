@@ -6,9 +6,11 @@ See doc/build-unix.txt for CLI (posd) and GUI (pos-qt) instructions.
 
 Windows cross-compile from Ubuntu 22.04
 ---------------------------------------
-See doc/build-windows.txt, or run:
+Builds both CLI (posd.exe) and GUI (pos-qt.exe). See doc/build-windows.txt:
 
   ./compile-windows.sh
+
+Output: release/windows/posd.exe and release/windows/pos-qt.exe
 
 See doc/readme-qt.rst for additional Qt options.
 See doc/build-*.txt for platform-specific notes on building posd,

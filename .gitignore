@@ -28,6 +28,9 @@ qrc_*.cpp
 #mac specific
 .DS_Store
 build
+build-win-qt/
 dist/
+depends/
+release/
 
 !src/leveldb/Makefile

@@ -2,19 +2,19 @@ TEMPLATE = app
 TARGET = pos-qt
 VERSION = 1.0.7
 INCLUDEPATH += src src/json src/qt
-DEFINES += QT_GUI BOOST_THREAD_USE_LIB BOOST_SPIRIT_THREADSAFE OPENSSL_SUPPRESS_DEPRECATED
+DEFINES += QT_GUI BOOST_THREAD_USE_LIB BOOST_SPIRIT_THREADSAFE BOOST_BIND_GLOBAL_PLACEHOLDERS OPENSSL_SUPPRESS_DEPRECATED
 CONFIG += no_include_pwd
 CONFIG += thread
-CONFIG += c++11
+CONFIG += c++17
 
 greaterThan(QT_MAJOR_VERSION, 4) {
     QT += widgets
     DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0
 }
 
-# Ubuntu 22.04 / 24.04 / 26.04: ensure C++11 and quiet OpenSSL 3 deprecations
-QMAKE_CXXFLAGS += -std=c++11 -DOPENSSL_SUPPRESS_DEPRECATED
-QMAKE_CFLAGS += -DOPENSSL_SUPPRESS_DEPRECATED
+# Ubuntu 22.04+ / Windows MinGW: C++17 + quiet OpenSSL 3 deprecations
+QMAKE_CXXFLAGS += -std=c++17 -DOPENSSL_SUPPRESS_DEPRECATED -Wno-deprecated-declarations -Wno-deprecated-copy
+QMAKE_CFLAGS += -DOPENSSL_SUPPRESS_DEPRECATED -Wno-deprecated-declarations
 
 # for boost 1.37, add -mt to the boost libraries
 # use: qmake BOOST_LIB_SUFFIX=-mt
@@ -50,7 +50,9 @@ QMAKE_LFLAGS *= -fstack-protector-all --param ssp-buffer-size=1
 }
 # for extra security on Windows: enable ASLR and DEP via GCC linker flags
 win32:QMAKE_LFLAGS *= -Wl,--dynamicbase -Wl,--nxcompat
-win32:QMAKE_LFLAGS += -static-libgcc -static-libstdc++
+# Fully static MinGW runtime so the .exe does not need libwinpthread-1.dll /
+# libgcc_s_seh-1.dll / libstdc++-6.dll next to it on the target PC.
+win32:QMAKE_LFLAGS += -static -static-libgcc -static-libstdc++
 
 # use: qmake "USE_QRCODE=1"
 # libqrencode (http://fukuchi.org/works/qrencode/index.en.html) must be installed for support
@@ -139,6 +141,12 @@ contains(USE_O3, 1) {
 }
 
 QMAKE_CXXFLAGS_WARN_ON = -fdiagnostics-show-option -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter -Wstack-protector
+# MinGW: "%"PRIx64 without a space triggers -Wliteral-suffix
+win32:QMAKE_CXXFLAGS_WARN_ON += -Wno-literal-suffix -Wno-format-extra-args
+win32:QMAKE_CXXFLAGS += -Wno-literal-suffix -Wno-format-extra-args
+
+# Static Qt needs the Windows QPA plugin linked in
+windows:QTPLUGIN += qwindows
 
 # Input
 DEPENDPATH += src src/json src/qt
@@ -391,6 +399,7 @@ isEmpty(BOOST_INCLUDE_PATH) {
 }
 
 windows:DEFINES += WIN32
+windows:DEFINES += __USE_MINGW_ANSI_STDIO=1
 windows:RC_FILE = src/qt/res/bitcoin-qt.rc
 
 windows:!contains(MINGW_THREAD_BUGFIX, 0) {
@@ -420,6 +429,8 @@ LIBS += $$join(BOOST_LIB_PATH,,-L,) $$join(BDB_LIB_PATH,,-L,) $$join(OPENSSL_LIB
 LIBS += -lssl -lcrypto -ldb_cxx$$BDB_LIB_SUFFIX
 # -lgdi32 has to happen after -lcrypto (see  #681)
 windows:LIBS += -lws2_32 -lshlwapi -lmswsock -lole32 -loleaut32 -luuid -lgdi32
+# Static Qt (Schannel / platform plugin) often needs these beyond the defaults
+windows:LIBS += -lcrypt32 -lsecur32 -lbcrypt -lwinmm -lversion -lnetapi32 -luserenv -ldwmapi -luxtheme -lcomdlg32 -lwinspool -limm32 -lwtsapi32
 LIBS += -lboost_system$$BOOST_LIB_SUFFIX -lboost_filesystem$$BOOST_LIB_SUFFIX -lboost_program_options$$BOOST_LIB_SUFFIX -lboost_thread$$BOOST_THREAD_LIB_SUFFIX -lboost_chrono$$BOOST_LIB_SUFFIX
 # boost_chrono is required on Linux (Boost >= 1.70) and Windows
 
@@ -434,5 +445,9 @@ contains(RELEASE, 1) {
     DEFINES += LINUX
     LIBS += -lrt -ldl
 }
+
+# MUST be last on the link line. An earlier -Wl,-Bdynamic (or the g++ driver
+# default) would pull shared libstdc++-6.dll / libwinpthread-1.dll.
+win32:LIBS += -Wl,-Bstatic -lstdc++ -lwinpthread -lpthread -lgcc_eh -lgcc
 
 system($$QMAKE_LRELEASE -silent $$_PRO_FILE_)
