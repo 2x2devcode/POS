@@ -875,6 +875,25 @@ build_gui() {
         || die "Host lrelease not found (install qttools5-dev-tools)"
     log "Using host lrelease: $host_lrelease"
 
+    # Static MinGW runtime libs. MXE GCC 5.5 has no libgcc_eh.a — probing avoids
+    # "cannot find -lgcc_eh" at link time while still using it on toolchains that ship it.
+    local probe_cxx="${TARGET}-g++"
+    if [[ "$qmake_bin" == *"/mxe/"* ]]; then
+        if [[ -x "${MXE_PREFIX}/usr/bin/${MXE_TARGET}-g++" ]]; then
+            probe_cxx="${MXE_PREFIX}/usr/bin/${MXE_TARGET}-g++"
+        fi
+    fi
+    local static_rt_libs="-Wl,-Bstatic -lstdc++ -lwinpthread -lpthread -lgcc"
+    local eh_test
+    eh_test="$(mktemp /tmp/pos-gcc-eh-XXXXXX.exe)"
+    if echo 'int main(){return 0;}' | "$probe_cxx" -x c++ - -static -lgcc_eh -o "$eh_test" 2>/dev/null; then
+        static_rt_libs+=" -lgcc_eh"
+        log "Toolchain supports -lgcc_eh ($probe_cxx)"
+    else
+        log "Toolchain has no -lgcc_eh ($probe_cxx); linking without it"
+    fi
+    rm -f "$eh_test"
+
     local qmake_args=(
         "USE_UPNP=-"
         "USE_QRCODE=0"
@@ -894,7 +913,7 @@ build_gui() {
         "QMAKE_LRELEASE=${host_lrelease}"
         # Force fully static MinGW runtime (no libstdc++-6.dll / libwinpthread-1.dll)
         "QMAKE_LFLAGS+=-static -static-libgcc -static-libstdc++"
-        "LIBS+=-Wl,-Bstatic -lstdc++ -lwinpthread -lpthread -lgcc_eh -lgcc"
+        "LIBS+=${static_rt_libs}"
     )
 
     # When using our own Qt (not MXE wrappers), force mingw compilers

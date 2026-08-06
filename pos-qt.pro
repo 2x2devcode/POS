@@ -453,6 +453,8 @@ contains(RELEASE, 1) {
 
 # MUST be last on the link line. An earlier -Wl,-Bdynamic (or the g++ driver
 # default) would pull shared libstdc++-6.dll / libwinpthread-1.dll.
-win32:LIBS += -Wl,-Bstatic -lstdc++ -lwinpthread -lpthread -lgcc_eh -lgcc
+# Do not force -lgcc_eh here: MXE's GCC 5.x has no libgcc_eh.a ("cannot find
+# -lgcc_eh"). compile-windows.sh adds -lgcc_eh only when the toolchain has it.
+win32:LIBS += -Wl,-Bstatic -lstdc++ -lwinpthread -lpthread -lgcc
 
 system($$QMAKE_LRELEASE -silent $$_PRO_FILE_)
