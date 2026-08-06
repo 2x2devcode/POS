@@ -1,9 +1,16 @@
 Building POS
 
-See doc/readme-qt.rst for instructions on building POS QT,
-the intended-for-end-users, nice-graphical-interface, reference
-implementation of POS.
+Native Linux (Ubuntu 22.04 / 24.04 / 26.04)
+-------------------------------------------
+See doc/build-unix.txt for CLI (posd) and GUI (pos-qt) instructions.
 
-See doc/build-*.txt for instructions on building posd,
+Windows cross-compile from Ubuntu 22.04
+---------------------------------------
+See doc/build-windows.txt, or run:
+
+  ./compile-windows.sh
+
+See doc/readme-qt.rst for additional Qt options.
+See doc/build-*.txt for platform-specific notes on building posd,
 the intended-for-services, no-graphical-interface, reference
 implementation of POS.

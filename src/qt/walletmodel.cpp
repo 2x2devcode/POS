@@ -8,6 +8,7 @@
 #include "wallet.h"
 #include "walletdb.h" // for BackupWallet
 #include "base58.h"
+#include "boost_compat.h"
 
 #include <QSet>
 #include <QTimer>

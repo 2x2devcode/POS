@@ -1,0 +1,192 @@
+Copyright (c) 2009-2012 Bitcoin Developers
+Copyright (c) 2019-2026 POSCoin Developers
+Distributed under the MIT/X11 software license.
+
+================================================================
+CROSS-COMPILE WINDOWS CLI + GUI ON UBUNTU 22.04
+================================================================
+
+This document describes how to build Windows executables for POSCoin
+from an Ubuntu 22.04 host:
+
+  - posd.exe      (headless CLI / daemon)
+  - pos-qt.exe    (Qt5 GUI wallet)
+
+The automated script at the repository root does the same steps:
+
+  ./compile-windows.sh
+
+----------------------------------------------------------------
+1. Host requirements
+----------------------------------------------------------------
+
+  * Ubuntu 22.04 LTS (Jammy) recommended for this guide
+  * ~20 GB free disk space under /usr and the build directory
+  * Root/sudo privileges for package installs
+  * Network access to download OpenSSL, Berkeley DB, Boost and Qt
+
+----------------------------------------------------------------
+2. Install host packages
+----------------------------------------------------------------
+
+  sudo dpkg --add-architecture i386
+  sudo apt-get update
+  sudo apt-get install -y \
+    build-essential curl wget git pkg-config autoconf automake libtool \
+    cmake ninja-build python3 unzip zip \
+    g++-mingw-w64-i686 g++-mingw-w64-x86-64 \
+    mingw-w64 mingw-w64-tools \
+    libz-mingw-w64-dev
+
+  # Prefer POSIX threading model for MinGW (required by Boost/Qt)
+  sudo update-alternatives --set i686-w64-mingw32-g++ \
+    /usr/bin/i686-w64-mingw32-g++-posix
+  sudo update-alternatives --set i686-w64-mingw32-gcc \
+    /usr/bin/i686-w64-mingw32-gcc-posix
+
+----------------------------------------------------------------
+3. Dependency versions (32-bit MinGW)
+----------------------------------------------------------------
+
+Default paths used by src/makefile.linux-mingw and compile-windows.sh:
+
+  DEPSDIR=/usr/i686-w64-mingw32
+
+  OpenSSL     1.1.1w   -> $DEPSDIR/openssl-1.1.1w
+  Berkeley DB 6.0.20   -> $DEPSDIR/db-6.0.20
+  Boost       1.70.0   -> $DEPSDIR/boost_1_70_0
+  Qt          5.15.2   -> $DEPSDIR/qt-5.15.2  (for GUI only)
+  zlib        system mingw package
+
+These versions are known to work with the OpenSSL 1.1 API used by
+this codebase when cross-compiling. Native Linux builds use the
+system OpenSSL 3.x with the compatibility layer in src/openssl_compat.h.
+
+----------------------------------------------------------------
+4. Build dependencies (manual)
+----------------------------------------------------------------
+
+You can skip this section and run ./compile-windows.sh which builds
+and installs the same dependencies automatically.
+
+4.1 OpenSSL 1.1.1w
+
+  cd /tmp
+  curl -LO https://www.openssl.org/source/openssl-1.1.1w.tar.gz
+  tar xzf openssl-1.1.1w.tar.gz
+  cd openssl-1.1.1w
+  ./Configure mingw \
+    --cross-compile-prefix=i686-w64-mingw32- \
+    --prefix=/usr/i686-w64-mingw32/openssl-1.1.1w \
+    no-shared no-asm
+  make -j$(nproc)
+  sudo make install_sw
+
+4.2 Berkeley DB 6.0.20
+
+  cd /tmp
+  curl -LO https://download.oracle.com/berkeley-db/db-6.0.20.tar.gz
+  tar xzf db-6.0.20.tar.gz
+  cd db-6.0.20/build_unix
+  ../dist/configure \
+    --host=i686-w64-mingw32 \
+    --enable-mingw \
+    --enable-cxx \
+    --disable-shared \
+    --prefix=/usr/i686-w64-mingw32/db-6.0.20
+  make -j$(nproc)
+  sudo make install
+
+4.3 Boost 1.70.0
+
+  cd /tmp
+  curl -LO https://archives.boost.io/release/1.70.0/source/boost_1_70_0.tar.bz2
+  tar xjf boost_1_70_0.tar.bz2
+  cd boost_1_70_0
+  ./bootstrap.sh
+  echo "using gcc : : i686-w64-mingw32-g++ ;" > user-config.jam
+  ./b2 --user-config=user-config.jam \
+    toolset=gcc target-os=windows threadapi=win32 \
+    link=static runtime-link=static \
+    --with-system --with-filesystem --with-program_options \
+    --with-thread --with-chrono \
+    stage -j$(nproc)
+  sudo mkdir -p /usr/i686-w64-mingw32/boost_1_70_0
+  sudo cp -a boost stage /usr/i686-w64-mingw32/boost_1_70_0/
+
+4.4 Qt 5.15.2 (GUI only)
+
+  Building Qt for MinGW is the longest step. The compile-windows.sh
+  script builds a minimal static Qt 5.15.2 (qtbase + qttools) for
+  i686-w64-mingw32. Expect 30–90 minutes depending on CPU.
+
+----------------------------------------------------------------
+5. Build Windows CLI (posd.exe)
+----------------------------------------------------------------
+
+  cd /path/to/POS
+  cd src
+  make -f makefile.linux-mingw clean
+  make -f makefile.linux-mingw -j$(nproc) \
+    DEPSDIR=/usr/i686-w64-mingw32 \
+    TARGET_PLATFORM=i686
+
+  Result: src/posd.exe
+
+----------------------------------------------------------------
+6. Build Windows GUI (pos-qt.exe)
+----------------------------------------------------------------
+
+  cd /path/to/POS
+  export PATH=/usr/i686-w64-mingw32/qt-5.15.2/bin:$PATH
+  i686-w64-mingw32-qmake-qt5 \
+    -spec win32-g++ \
+    USE_UPNP=- \
+    USE_QRCODE=0 \
+    BOOST_LIB_SUFFIX=-mt \
+    BOOST_INCLUDE_PATH=/usr/i686-w64-mingw32/boost_1_70_0 \
+    BOOST_LIB_PATH=/usr/i686-w64-mingw32/boost_1_70_0/stage/lib \
+    BDB_INCLUDE_PATH=/usr/i686-w64-mingw32/db-6.0.20/include \
+    BDB_LIB_PATH=/usr/i686-w64-mingw32/db-6.0.20/lib \
+    OPENSSL_INCLUDE_PATH=/usr/i686-w64-mingw32/openssl-1.1.1w/include \
+    OPENSSL_LIB_PATH=/usr/i686-w64-mingw32/openssl-1.1.1w/lib \
+    pos-qt.pro
+
+  make -j$(nproc)
+
+  Result: release/pos-qt.exe  (or ./pos-qt.exe depending on qmake spec)
+
+----------------------------------------------------------------
+7. Verify outputs
+----------------------------------------------------------------
+
+  file src/posd.exe
+  # PE32 executable (console) Intel 80386, for MS Windows
+
+  i686-w64-mingw32-strip src/posd.exe
+  i686-w64-mingw32-strip release/pos-qt.exe
+
+----------------------------------------------------------------
+8. Automated build
+----------------------------------------------------------------
+
+  chmod +x compile-windows.sh
+  ./compile-windows.sh
+
+  The script:
+    * Checks that the host is Ubuntu 22.04 (warns otherwise)
+    * Verifies / installs MinGW and required packages
+    * Builds missing OpenSSL / BDB / Boost / Qt under DEPSDIR
+    * Updates include/lib paths in makefile.linux-mingw if needed
+    * Builds posd.exe and pos-qt.exe into dist/windows/
+
+----------------------------------------------------------------
+9. Notes
+----------------------------------------------------------------
+
+  * Wallet.dat compatibility: Berkeley DB major version must match
+    the version used to create the wallet. Prefer DB 6.0 for Windows
+    releases produced by this guide.
+  * For 64-bit Windows, set TARGET_PLATFORM=x86_64 and rebuild deps
+    with x86_64-w64-mingw32-* toolchains (advanced).
+  * Native Linux builds: see doc/build-unix.txt (Ubuntu 22.04/24.04/26.04).
