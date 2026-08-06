@@ -1228,15 +1228,28 @@ void MapPort()
 
 
 
-// DNS seeds
+// DNS / fixed hostname seeds
 // Each pair gives a source name and a seed name.
 // The first name is used as information source for addrman.
 // The second name should resolve to a list of seed addresses.
+// Literal IPs are valid (LookupHost accepts them) and are taken from
+// https://www.coinexplorer.net/api/v1/POS/peers (verified on :21033).
 static const char *strDNSSeed[][2] = {
     {"207.180.192.124", "207.180.192.124"},
     {"82.6.75.149", "82.6.75.149"},
     {"67.164.34.64", "67.164.34.64"},
     {"76.18.251.86", "76.18.251.86"},
+    {"113.155.203.160", "113.155.203.160"},
+    {"62.171.138.11", "62.171.138.11"},
+    {"118.211.51.192", "118.211.51.192"},
+    {"62.171.132.223", "62.171.132.223"},
+    {"194.103.107.14", "194.103.107.14"},
+    {"150.221.161.196", "150.221.161.196"},
+    {"81.214.132.27", "81.214.132.27"},
+    {"45.85.234.113", "45.85.234.113"},
+    {"37.214.8.197", "37.214.8.197"},
+    {"167.86.67.25", "167.86.67.25"},
+    {"188.163.0.169", "188.163.0.169"},
     {"posnode1.ddns.net", "posnode1.ddns.net"},
     {"posnode2.ddns.net", "posnode2.ddns.net"},
 };
@@ -1307,8 +1320,26 @@ void ThreadDNSAddressSeed2(void* parg)
 
 
 
+// Seed nodes from https://www.coinexplorer.net/api/v1/POS/peers
+// (unique IPs verified reachable on P2P port 21033). Little-endian
+// encoding matches Bitcoin/Peercoin pnSeed layout (inet_aton bytes).
 unsigned int pnSeed[] =
 {
+    0x7cc0b4cf, // 207.180.192.124
+    0x954b0652, // 82.6.75.149
+    0x4022a443, // 67.164.34.64
+    0x56fb124c, // 76.18.251.86
+    0xa0cb9b71, // 113.155.203.160
+    0x0b8aab3e, // 62.171.138.11
+    0xc033d376, // 118.211.51.192
+    0xdf84ab3e, // 62.171.132.223
+    0x0e6b67c2, // 194.103.107.14
+    0xc4a1dd96, // 150.221.161.196
+    0x1b84d651, // 81.214.132.27
+    0x71ea552d, // 45.85.234.113
+    0xc508d625, // 37.214.8.197
+    0x194356a7, // 167.86.67.25
+    0xa900a3bc, // 188.163.0.169
 };
 
 void DumpAddresses()

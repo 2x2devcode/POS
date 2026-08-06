@@ -25,6 +25,9 @@ namespace Checkpoints
     //    timestamp before)
     // + Contains no strange transactions
     //
+    // Hardened checkpoints from https://www.coinexplorer.net/POS
+    // (hashes verified via /api/v1/POS/block?height=N). Tip margin kept
+    // so nodes can still sync the newest day of blocks normally.
     static MapCheckpoints mapCheckpoints =
         boost::assign::map_list_of
         ( 0,       hashGenesisBlock )
@@ -34,6 +37,20 @@ namespace Checkpoints
         ( 94301,   uint256("0x7ac129f5a67678144187ad7779d9728723a7582e7850303f2151497833588d4e"))
         ( 189880,  uint256("0xc633cdce9e1b372146398b8d31c8f0a6315f8c9c8c8a8fad93693d98af30c1fb"))
         ( 3550984, uint256("0x02a559537c4d81cc2da3d90514f6c55a1d0010b7ea601759030362a14ff8f589"))
+        ( 4000000, uint256("0x9750b5e3e3254400a9f9438412e54be2dd6ef14c31ecc4b0322cdea5cf189838"))
+        ( 4200000, uint256("0xb4d59c8e405582e4ade371b98380a137721e83e1b0003e6576008061851b7af2"))
+        ( 4500000, uint256("0x54c09dec0c234be2fc24e6f9d021ef07809d793b4ef3c542f39e8bf6624bb24e"))
+        ( 4800000, uint256("0x2c9906877bff828f9f123641f9ef017e9168c4a58e6822d7b1df97f3a74aba78"))
+        ( 5000000, uint256("0x549ec0c11356eb9830cb2bf5481ed5cab66de0be23b23263fcfbc130518292f0"))
+        ( 5200000, uint256("0x887c62419b16bccfcd92f6bb7c225e04f0f7070ea06e394c1c62536db9b92245"))
+        ( 5400000, uint256("0x0660fc3cd729d60227049e5e6e78d80675bfc7ad746ad1771bdbb70e31158530"))
+        ( 5500000, uint256("0x958c2795cdf995c6679e43104285d9d507aa712f4f84bcc384eb07aa68ff41b2"))
+        ( 5550000, uint256("0xcd9ead36bd435703303c461da55f6e7dcd6906a6f766ab52278bfe78242f86db"))
+        ( 5580000, uint256("0x84582565194f1a6faa673f0e4595f9256e9fd4cae38e8d0be0b38de77b3e0059"))
+        ( 5600000, uint256("0x7444f8611571efeb63ef7fe3c7ba2f20ea45c114ccfb97512fdebe943d494118"))
+        ( 5610000, uint256("0xab5cc304c5af7d7f27f9e5b9a6417fef959f9424a5f56e667415ef203bc7c62b"))
+        ( 5615000, uint256("0xa2595373ef30c424de98c3651200736ba077785667856c4f59896668e06a1fcf"))
+        ( 5618000, uint256("0x285e20c667ba51143d6b45764dc424bd95cc8fbc0591e87479918a44d60184c2"))
     ;
 
     // TestNet has no checkpoints
