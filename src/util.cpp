@@ -1021,13 +1021,24 @@ boost::filesystem::path GetDefaultDataDir()
 #endif
 }
 
+namespace {
+boost::filesystem::path pathCached[2];
+bool cachedPath[2] = {false, false};
+CCriticalSection csPathCached;
+}
+
+void ClearDatadirCache()
+{
+    LOCK(csPathCached);
+    cachedPath[0] = false;
+    cachedPath[1] = false;
+    pathCached[0] = boost::filesystem::path();
+    pathCached[1] = boost::filesystem::path();
+}
+
 const boost::filesystem::path &GetDataDir(bool fNetSpecific)
 {
     namespace fs = boost::filesystem;
-
-    static fs::path pathCached[2];
-    static CCriticalSection csPathCached;
-    static bool cachedPath[2] = {false, false};
 
     fs::path &path = pathCached[fNetSpecific];
 
@@ -1037,6 +1048,10 @@ const boost::filesystem::path &GetDataDir(bool fNetSpecific)
         return path;
 
     LOCK(csPathCached);
+
+    // Re-check after taking the lock
+    if (cachedPath[fNetSpecific])
+        return path;
 
     if (mapArgs.count("-datadir")) {
         path = fs::system_complete(mapArgs["-datadir"]);
