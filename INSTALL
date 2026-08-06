@@ -1,8 +1,13 @@
 Building POS
 
-Native Linux (Ubuntu 22.04 / 24.04 / 26.04)
--------------------------------------------
-See doc/build-unix.txt for CLI (posd) and GUI (pos-qt) instructions.
+Native Linux (Ubuntu 18.04 / 20.04 / 22.04 / 24.04 / 26.04)
+-----------------------------------------------------------
+Automated build (detects the host Ubuntu version, installs deps,
+builds CLI + GUI into release/linux/<distro>-<version>/):
+
+  ./compile-linux.sh
+
+Manual steps: see doc/build-unix.txt.
 
 Windows cross-compile from Ubuntu 22.04
 ---------------------------------------
