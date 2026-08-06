@@ -350,9 +350,14 @@ CODECFORTR = UTF-8
 # also add new translations to src/qt/bitcoin.qrc under translations/
 TRANSLATIONS = $$files(src/qt/locale/bitcoin_*.ts)
 
+# Cross-builds run on Linux: never use Windows "bin\lrelease.exe" (backslash
+# collapses to "binlrelease.exe" under GNU make → Error 127). Override with
+# QMAKE_LRELEASE=/usr/bin/lrelease from compile-windows.sh when possible.
 isEmpty(QMAKE_LRELEASE) {
-    win32:QMAKE_LRELEASE = $$[QT_INSTALL_BINS]\\lrelease.exe
-    else:QMAKE_LRELEASE = $$[QT_INSTALL_BINS]/lrelease
+    QMAKE_LRELEASE = $$[QT_INSTALL_BINS]/lrelease
+    !exists($$QMAKE_LRELEASE) {
+        QMAKE_LRELEASE = lrelease
+    }
 }
 isEmpty(QM_DIR):QM_DIR = $$PWD/src/qt/locale
 # automatically build translations, so they can be included in resource file

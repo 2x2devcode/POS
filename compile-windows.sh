@@ -246,6 +246,9 @@ install_host_packages() {
         libfontconfig1-dev libfreetype6-dev
         libx11-dev libxext-dev libxfixes-dev libxi-dev libxrender-dev
         libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+        # Host lrelease for .ts → .qm during MinGW GUI builds (MXE qmake
+        # otherwise picks QT_INSTALL_BINS\lrelease.exe which breaks on Linux)
+        qttools5-dev-tools
         software-properties-common lsb-release gnupg apt-transport-https
     )
     if need_cmd apt-get; then
@@ -771,6 +774,23 @@ find_mingw_qmake() {
     return 1
 }
 
+# Host-side lrelease (Linux) — never use MXE's *.exe path with backslashes.
+find_host_lrelease() {
+    local c
+    for c in \
+        "$(command -v lrelease-qt5 2>/dev/null || true)" \
+        "$(command -v lrelease 2>/dev/null || true)" \
+        "${MXE_PREFIX}/usr/bin/${MXE_TARGET}-lrelease" \
+        "$DEPS/qt/bin/lrelease"
+    do
+        if [[ -n "$c" && -x "$c" ]]; then
+            echo "$c"
+            return 0
+        fi
+    done
+    return 1
+}
+
 ensure_qt() {
     if [[ "$BUILD_GUI" != "1" ]]; then
         return 0
@@ -850,6 +870,11 @@ build_gui() {
     rm -f "$ROOT/src/leveldb/libleveldb.a" "$ROOT/src/leveldb/libmemenv.a"
     make -C "$ROOT/src/leveldb" clean >/dev/null 2>&1 || true
 
+    local host_lrelease
+    host_lrelease="$(find_host_lrelease)" \
+        || die "Host lrelease not found (install qttools5-dev-tools)"
+    log "Using host lrelease: $host_lrelease"
+
     local qmake_args=(
         "USE_UPNP=-"
         "USE_QRCODE=0"
@@ -864,6 +889,9 @@ build_gui() {
         "BDB_LIB_PATH=${DEPS}/lib"
         "OPENSSL_INCLUDE_PATH=${DEPS}/include"
         "OPENSSL_LIB_PATH=${DEPS}/lib"
+        # Always override: MXE/win32 defaults to QT_INSTALL_BINS\lrelease.exe
+        # which becomes "binlrelease.exe" on Linux (Error 127).
+        "QMAKE_LRELEASE=${host_lrelease}"
         # Force fully static MinGW runtime (no libstdc++-6.dll / libwinpthread-1.dll)
         "QMAKE_LFLAGS+=-static -static-libgcc -static-libstdc++"
         "LIBS+=-Wl,-Bstatic -lstdc++ -lwinpthread -lpthread -lgcc_eh -lgcc"
@@ -878,7 +906,6 @@ build_gui() {
             "QMAKE_LINK=${TARGET}-g++"
             "QMAKE_LIB=${TARGET}-ar"
             "QMAKE_RANLIB=${TARGET}-ranlib"
-            "QMAKE_LRELEASE=$(command -v lrelease-qt5 || command -v lrelease || echo lrelease)"
         )
     fi
 
