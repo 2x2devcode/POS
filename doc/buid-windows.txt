@@ -1,1 +1,8 @@
 See build-windows.txt for the Windows cross-compile guide (Ubuntu 22.04).
+
+If ./compile-windows.sh fails on apt-get update with a PPA Label change
+(e.g. ondrej/php), run:
+
+  sudo apt-get update --allow-releaseinfo-change
+
+Then re-run ./compile-windows.sh

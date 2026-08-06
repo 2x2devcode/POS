@@ -73,8 +73,17 @@ ensure_packages() {
 
   if ((${#missing[@]})); then
     log "Installing missing packages: ${missing[*]}"
-    sudo_run apt-get update
-    sudo_run DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+    # --allow-releaseinfo-change: accept Label/Codename changes from third-party
+    # PPAs (e.g. ondrej/php) so apt-get update does not abort the build.
+    if ! sudo_run apt-get update --allow-releaseinfo-change; then
+      warn "apt-get update reported errors (often unrelated PPAs). Retrying with allow-releaseinfo-change-*"
+      sudo_run apt-get update \
+        --allow-releaseinfo-change-label \
+        --allow-releaseinfo-change-version \
+        --allow-releaseinfo-change-suite || \
+        warn "apt-get update still failed; attempting install from existing package indexes"
+    fi
+    sudo_run DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
   else
     log "Required apt packages already installed."
   fi

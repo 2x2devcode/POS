@@ -30,13 +30,20 @@ The automated script at the repository root does the same steps:
 ----------------------------------------------------------------
 
   sudo dpkg --add-architecture i386
-  sudo apt-get update
+  # Allow Label/Codename changes from third-party PPAs (e.g. ondrej/php):
+  sudo apt-get update --allow-releaseinfo-change
   sudo apt-get install -y \
     build-essential curl wget git pkg-config autoconf automake libtool \
     cmake ninja-build python3 unzip zip \
     g++-mingw-w64-i686 g++-mingw-w64-x86-64 \
     mingw-w64 mingw-w64-tools \
     libz-mingw-w64-dev
+
+  If apt-get update fails only because a PPA changed its Label, accept it once:
+
+    sudo apt-get update --allow-releaseinfo-change
+
+  Or fix/remove the offending source under /etc/apt/sources.list.d/ and retry.
 
   # Prefer POSIX threading model for MinGW (required by Boost/Qt)
   sudo update-alternatives --set i686-w64-mingw32-g++ \
