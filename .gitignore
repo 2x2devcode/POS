@@ -3,6 +3,11 @@ src/pos
 src/posd
 src/test_pos
 src/build.h
+src/obj/*.P
+src/obj/*.d
+src/obj/zerocoin/*.P
+src/obj/zerocoin/*.d
+src/obj/build.h
 .*.swp
 *.*~*
 *.bak
@@ -15,6 +20,7 @@ src/build.h
 *.qm
 Makefile
 pos-qt
+.qmake.stash
 #resources cpp
 qrc_*.cpp
 #qt creator
@@ -22,5 +28,6 @@ qrc_*.cpp
 #mac specific
 .DS_Store
 build
+dist/
 
 !src/leveldb/Makefile

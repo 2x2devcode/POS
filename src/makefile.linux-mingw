@@ -13,18 +13,36 @@ STRIP=$(TARGET_PLATFORM)-w64-mingw32-strip
 
 USE_UPNP:=0
 
+# Prefer OpenSSL 1.1.1w / Boost 1.70 / DB 6.0.20 layout produced by compile-windows.sh.
+# Fall back to legacy folder names if present.
+OPENSSL_DIR ?= $(shell \
+  if [ -d "$(DEPSDIR)/openssl-1.1.1w" ]; then echo "$(DEPSDIR)/openssl-1.1.1w"; \
+  elif [ -d "$(DEPSDIR)/openssl-1.0.1f" ]; then echo "$(DEPSDIR)/openssl-1.0.1f"; \
+  else echo "$(DEPSDIR)/openssl-1.1.1w"; fi)
+BOOST_DIR ?= $(shell \
+  if [ -d "$(DEPSDIR)/boost_1_70_0" ]; then echo "$(DEPSDIR)/boost_1_70_0"; \
+  elif [ -d "$(DEPSDIR)/boost_1_55_0" ]; then echo "$(DEPSDIR)/boost_1_55_0"; \
+  else echo "$(DEPSDIR)/boost_1_70_0"; fi)
+BDB_DIR ?= $(shell \
+  if [ -d "$(DEPSDIR)/db-6.0.20" ]; then echo "$(DEPSDIR)/db-6.0.20"; \
+  elif [ -d "$(DEPSDIR)/db-6.0.20/build_unix" ]; then echo "$(DEPSDIR)/db-6.0.20"; \
+  else echo "$(DEPSDIR)/db-6.0.20"; fi)
+
 INCLUDEPATHS= \
  -I"$(CURDIR)" \
  -I"$(CURDIR)"/obj \
- -I"$(DEPSDIR)/boost_1_55_0" \
- -I"$(DEPSDIR)/db-6.0.20/build_unix" \
- -I"$(DEPSDIR)/openssl-1.0.1f/include" \
+ -I"$(BOOST_DIR)" \
+ -I"$(BDB_DIR)/include" \
+ -I"$(BDB_DIR)/build_unix" \
+ -I"$(OPENSSL_DIR)/include" \
  -I"$(DEPSDIR)"
 
 LIBPATHS= \
- -L"$(DEPSDIR)/boost_1_55_0/stage/lib" \
- -L"$(DEPSDIR)/db-6.0.20/build_unix" \
- -L"$(DEPSDIR)/openssl-1.0.1f"
+ -L"$(BOOST_DIR)/stage/lib" \
+ -L"$(BDB_DIR)/lib" \
+ -L"$(BDB_DIR)/build_unix" \
+ -L"$(OPENSSL_DIR)/lib" \
+ -L"$(OPENSSL_DIR)"
 
 LIBS= \
  -l boost_system-mt \
@@ -37,9 +55,9 @@ LIBS= \
  -l crypto \
  -l z
 
-DEFS=-D_MT -DWIN32 -D_WINDOWS -DBOOST_THREAD_USE_LIB -DBOOST_SPIRIT_THREADSAFE
+DEFS=-D_MT -DWIN32 -D_WINDOWS -DBOOST_THREAD_USE_LIB -DBOOST_SPIRIT_THREADSAFE -DOPENSSL_SUPPRESS_DEPRECATED
 DEBUGFLAGS=-g
-CFLAGS=-O3 -msse2 -w -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter $(DEBUGFLAGS) $(DEFS) $(INCLUDEPATHS)
+CFLAGS=-O3 -std=c++11 -msse2 -w -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter $(DEBUGFLAGS) $(DEFS) $(INCLUDEPATHS)
 LDFLAGS=-Wl,--dynamicbase -Wl,--nxcompat -static-libgcc -static-libstdc++
 
 ifndef USE_UPNP
@@ -108,7 +126,7 @@ DEFS += -I"$(CURDIR)/leveldb/include"
 DEFS += -I"$(CURDIR)/leveldb/helpers"
 OBJS += obj/txdb-leveldb.o
 leveldb/libleveldb.a:
-	@echo "Building LevelDB ..." && cd leveldb && CC=$(CC) CXX=$(CXX) TARGET_OS=OS_WINDOWS_CROSSCOMPILE CXXFLAGS="-I$(INCLUDEPATHS)" LDFLAGS="-L$(LIBPATHS)" $(MAKE) libleveldb.a libmemenv.a && $(RANLIB) libleveldb.a && $(RANLIB) libmemenv.a && cd ..
+	@echo "Building LevelDB ..." && cd leveldb && CC=$(CC) CXX=$(CXX) TARGET_OS=OS_WINDOWS_CROSSCOMPILE CXXFLAGS="-I$(INCLUDEPATHS) -std=c++11" LDFLAGS="-L$(LIBPATHS)" $(MAKE) libleveldb.a libmemenv.a && $(RANLIB) libleveldb.a && $(RANLIB) libmemenv.a && cd ..
 obj/txdb-leveldb.o: leveldb/libleveldb.a
 
 obj/build.h: FORCE

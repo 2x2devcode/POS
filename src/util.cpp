@@ -29,6 +29,8 @@ namespace boost {
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 #include <stdarg.h>
+#include "openssl_compat.h"
+#include "boost_compat.h"
 
 #ifdef WIN32
 #ifdef _MSC_VER
@@ -79,11 +81,15 @@ bool fReopenDebugLog = false;
 static CCriticalSection** ppmutexOpenSSL;
 void locking_callback(int mode, int i, const char* file, int line)
 {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     if (mode & CRYPTO_LOCK) {
         ENTER_CRITICAL_SECTION(*ppmutexOpenSSL[i]);
     } else {
         LEAVE_CRITICAL_SECTION(*ppmutexOpenSSL[i]);
     }
+#else
+    (void)mode; (void)i; (void)file; (void)line;
+#endif
 }
 
 LockedPageManager LockedPageManager::instance;
@@ -94,11 +100,13 @@ class CInit
 public:
     CInit()
     {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
         // Init OpenSSL library multithreading support
         ppmutexOpenSSL = (CCriticalSection**)OPENSSL_malloc(CRYPTO_num_locks() * sizeof(CCriticalSection*));
         for (int i = 0; i < CRYPTO_num_locks(); i++)
             ppmutexOpenSSL[i] = new CCriticalSection();
         CRYPTO_set_locking_callback(locking_callback);
+#endif
 
 #ifdef WIN32
         // Seed random number generator with screen scrape and other hardware sources
@@ -110,11 +118,13 @@ public:
     }
     ~CInit()
     {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
         // Shutdown OpenSSL library multithreading support
         CRYPTO_set_locking_callback(NULL);
         for (int i = 0; i < CRYPTO_num_locks(); i++)
             delete ppmutexOpenSSL[i];
         OPENSSL_free(ppmutexOpenSSL);
+#endif
     }
 }
 instance_of_cinit;
@@ -1082,7 +1092,7 @@ void createConf()
 boost::filesystem::path GetConfigFile()
 {
     boost::filesystem::path pathConfigFile(GetArg("-conf", "pos.conf"));
-    if (!pathConfigFile.is_complete()) pathConfigFile = GetDataDir(false) / pathConfigFile;
+    if (!BOOST_FS_IS_COMPLETE(pathConfigFile)) pathConfigFile = GetDataDir(false) / pathConfigFile;
     return pathConfigFile;
 }
 
@@ -1118,7 +1128,7 @@ void ReadConfigFile(map<string, string>& mapSettingsRet,
 boost::filesystem::path GetPidFile()
 {
     boost::filesystem::path pathPidFile(GetArg("-pid", "posd.pid"));
-    if (!pathPidFile.is_complete()) pathPidFile = GetDataDir() / pathPidFile;
+    if (!BOOST_FS_IS_COMPLETE(pathPidFile)) pathPidFile = GetDataDir() / pathPidFile;
     return pathPidFile;
 }
 

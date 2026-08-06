@@ -20,6 +20,14 @@
 #include <string.h>
 
 /*
+ * glibc 2.38+ provides strlcpy/strlcat. Provide fallbacks for older
+ * systems and for toolchains that do not expose them by default.
+ */
+#if defined(__GLIBC__) && ((__GLIBC__ > 2) || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 38))
+/* Use the libc implementations. */
+#else
+
+/*
  * Copy src to string dst of size siz.  At most siz-1 characters
  * will be copied.  Always NUL terminates (unless siz == 0).
  * Returns strlen(src); if retval >= siz, truncation occurred.
@@ -87,4 +95,7 @@ inline size_t strlcat(char *dst, const char *src, size_t siz)
 
     return(dlen + (s - src)); /* count does not include NUL */
 }
+
+#endif /* !glibc with strlcpy */
+
 #endif

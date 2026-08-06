@@ -14,6 +14,7 @@
 #include <QScrollBar>
 
 #include <openssl/crypto.h>
+#include "openssl_compat.h"
 
 // TODO: make it possible to filter out categories (esp debug messages when implemented)
 // TODO: receive errors and debug messages through ClientModel
@@ -204,7 +205,7 @@ RPCConsole::RPCConsole(QWidget *parent) :
     connect(ui->clearButton, SIGNAL(clicked()), this, SLOT(clear()));
 
     // set OpenSSL version label
-    ui->openSSLVersion->setText(SSLeay_version(SSLEAY_VERSION));
+    ui->openSSLVersion->setText(OpenSSLVersionString());
 
     startExecutor();
 
