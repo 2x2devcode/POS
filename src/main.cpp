@@ -1105,11 +1105,15 @@ unsigned int ComputeMinStake(unsigned int nBase, int64_t nTime, unsigned int nBl
 }
 
 
-// ppcoin: find last block index up to pindex
+// ppcoin: find last block index up to pindex of the requested proof type.
+// If no block of that type exists yet (e.g. first PoS after a pure-PoW
+// prefix at height 30), return NULL so callers use the difficulty limit.
 const CBlockIndex* GetLastBlockIndex(const CBlockIndex* pindex, bool fProofOfStake)
 {
     while (pindex && pindex->pprev && (pindex->IsProofOfStake() != fProofOfStake))
         pindex = pindex->pprev;
+    if (!pindex || pindex->IsProofOfStake() != fProofOfStake)
+        return NULL;
     return pindex;
 }
 
@@ -1120,12 +1124,13 @@ static unsigned int GetNextTargetRequiredV1(const CBlockIndex* pindexLast, bool 
     if (pindexLast == NULL)
         return bnTargetLimit.GetCompact(); // genesis block
 
+    // First block of this proof type (e.g. first PoS at height 30): use limit
     const CBlockIndex* pindexPrev = GetLastBlockIndex(pindexLast, fProofOfStake);
     if (pindexPrev == NULL || pindexPrev->pprev == NULL)
-        return bnTargetLimit.GetCompact(); // first block
+        return bnTargetLimit.GetCompact();
     const CBlockIndex* pindexPrevPrev = GetLastBlockIndex(pindexPrev->pprev, fProofOfStake);
     if (pindexPrevPrev == NULL || pindexPrevPrev->pprev == NULL)
-        return bnTargetLimit.GetCompact(); // second block
+        return bnTargetLimit.GetCompact(); // second block of this type
 
     int64_t nActualSpacing = pindexPrev->GetBlockTime() - pindexPrevPrev->GetBlockTime();
 
@@ -1152,10 +1157,10 @@ static unsigned int GetNextTargetRequiredV2(const CBlockIndex* pindexLast, bool 
 
     const CBlockIndex* pindexPrev = GetLastBlockIndex(pindexLast, fProofOfStake);
     if (pindexPrev == NULL || pindexPrev->pprev == NULL)
-        return bnTargetLimit.GetCompact(); // first block
+        return bnTargetLimit.GetCompact();
     const CBlockIndex* pindexPrevPrev = GetLastBlockIndex(pindexPrev->pprev, fProofOfStake);
     if (pindexPrevPrev == NULL || pindexPrevPrev->pprev == NULL)
-        return bnTargetLimit.GetCompact(); // second block
+        return bnTargetLimit.GetCompact();
 
     int64_t nActualSpacing = pindexPrev->GetBlockTime() - pindexPrevPrev->GetBlockTime();
     if (nActualSpacing < 0)
@@ -2368,7 +2373,13 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
         return error("ProcessBlock() : CheckBlock FAILED");
 
     if (pblock->IsProofOfStake())
+    {
         printf("ProcessBlock: CheckBlock OK for PoS %s\n", hash.ToString().substr(0,20).c_str());
+        // First PoS after the pure-PoW prefix (mainnet: height 30) is the
+        // hottest path on Windows GUI — keep a breadcrumb when none seen yet.
+        if (GetLastBlockIndex(pindexBest, true) == NULL)
+            printf("ProcessBlock: first proof-of-stake block on this chain tip\n");
+    }
 
     CBlockIndex* pcheckpoint = Checkpoints::GetLastSyncCheckpoint();
     if (pcheckpoint && pblock->hashPrevBlock != hashBestChain && !Checkpoints::WantedByPendingSyncCheckpoint(hash))
@@ -3344,11 +3355,15 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
                     if (inv.hash == pfrom->hashContinue)
                     {
                         // ppcoin: send latest proof-of-work block to allow the
-                        // download node to accept as orphan (proof-of-stake 
+                        // download node to accept as orphan (proof-of-stake
                         // block might be rejected by stake connection check)
-                        vector<CInv> vInv;
-                        vInv.push_back(CInv(MSG_BLOCK, GetLastBlockIndex(pindexBest, false)->GetBlockHash()));
-                        pfrom->PushMessage("inv", vInv);
+                        const CBlockIndex* pindexPow = GetLastBlockIndex(pindexBest, false);
+                        if (pindexPow)
+                        {
+                            vector<CInv> vInv;
+                            vInv.push_back(CInv(MSG_BLOCK, pindexPow->GetBlockHash()));
+                            pfrom->PushMessage("inv", vInv);
+                        }
                         pfrom->hashContinue = 0;
                     }
                 }

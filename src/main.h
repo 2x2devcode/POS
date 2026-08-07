@@ -28,7 +28,7 @@ class CNode;
 
 class CTxMemPool;
 
-static const int LAST_POW_BLOCK = 25000;
+static const int LAST_POW_BLOCK = 25000; // PoW allowed at height <= 25000 (PoS may start earlier; first mainnet PoS is height 30)
 
 /** The maximum allowed size for a serialized block, in bytes (network rule) */
 static const unsigned int MAX_BLOCK_SIZE = 1000000;
