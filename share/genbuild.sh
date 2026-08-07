@@ -11,15 +11,26 @@ else
     exit 1
 fi
 
+DESC=""
+TIME=""
 if [ -e "$(which git)" ]; then
     # clean 'dirty' status of touched files that haven't been modified
-    git diff >/dev/null 2>/dev/null 
+    git diff >/dev/null 2>/dev/null
 
-    # get a string like "v0.6.0-66-g59887e8-dirty"
+    # Prefer git-describe when tags exist (e.g. v0.6.0-66-g59887e8-dirty)
     DESC="$(git describe --dirty 2>/dev/null)"
 
-    # get a string like "2012-04-10 16:27:19 +0200"
-    TIME="$(git log -n 1 --format="%ci")"
+    # No tags in this repo — fall back to v1.0.0.1-g<shortsha>
+    if [ -z "$DESC" ]; then
+        SHORT="$(git rev-parse --short=7 HEAD 2>/dev/null)"
+        if [ -n "$SHORT" ]; then
+            DIRTY=""
+            git diff --quiet 2>/dev/null || DIRTY="-dirty"
+            DESC="v1.0.0.1-g${SHORT}${DIRTY}"
+        fi
+    fi
+
+    TIME="$(git log -n 1 --format="%ci" 2>/dev/null)"
 fi
 
 if [ -n "$DESC" ]; then

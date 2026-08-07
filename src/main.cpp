@@ -1084,10 +1084,10 @@ static unsigned int GetNextTargetRequiredV1(const CBlockIndex* pindexLast, bool 
         return bnTargetLimit.GetCompact(); // genesis block
 
     const CBlockIndex* pindexPrev = GetLastBlockIndex(pindexLast, fProofOfStake);
-    if (pindexPrev->pprev == NULL)
+    if (pindexPrev == NULL || pindexPrev->pprev == NULL)
         return bnTargetLimit.GetCompact(); // first block
     const CBlockIndex* pindexPrevPrev = GetLastBlockIndex(pindexPrev->pprev, fProofOfStake);
-    if (pindexPrevPrev->pprev == NULL)
+    if (pindexPrevPrev == NULL || pindexPrevPrev->pprev == NULL)
         return bnTargetLimit.GetCompact(); // second block
 
     int64_t nActualSpacing = pindexPrev->GetBlockTime() - pindexPrevPrev->GetBlockTime();
@@ -1114,10 +1114,10 @@ static unsigned int GetNextTargetRequiredV2(const CBlockIndex* pindexLast, bool 
         return bnTargetLimit.GetCompact(); // genesis block
 
     const CBlockIndex* pindexPrev = GetLastBlockIndex(pindexLast, fProofOfStake);
-    if (pindexPrev->pprev == NULL)
+    if (pindexPrev == NULL || pindexPrev->pprev == NULL)
         return bnTargetLimit.GetCompact(); // first block
     const CBlockIndex* pindexPrevPrev = GetLastBlockIndex(pindexPrev->pprev, fProofOfStake);
-    if (pindexPrevPrev->pprev == NULL)
+    if (pindexPrevPrev == NULL || pindexPrevPrev->pprev == NULL)
         return bnTargetLimit.GetCompact(); // second block
 
     int64_t nActualSpacing = pindexPrev->GetBlockTime() - pindexPrevPrev->GetBlockTime();
@@ -1851,7 +1851,12 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
     nTimeBestReceived = GetTime();
     nTransactionsUpdated++;
 
-    uint256 nBestBlockTrust = pindexBest->nHeight != 0 ? (pindexBest->nChainTrust - pindexBest->pprev->nChainTrust) : pindexBest->nChainTrust;
+    uint256 nBestBlockTrust = 0;
+    if (pindexBest) {
+        nBestBlockTrust = pindexBest->nHeight != 0 && pindexBest->pprev
+            ? (pindexBest->nChainTrust - pindexBest->pprev->nChainTrust)
+            : pindexBest->nChainTrust;
+    }
 
     printf("SetBestChain: new best=%s  height=%d  trust=%s  blocktrust=%"PRId64"  date=%s\n",
       hashBestChain.ToString().substr(0,20).c_str(), nBestHeight,
@@ -1919,6 +1924,9 @@ bool CTransaction::GetCoinAge(CTxDB& txdb, uint64_t& nCoinAge) const
             return false; // unable to read block of previous transaction
         if (block.GetBlockTime() + nStakeMinAge > nTime)
             continue; // only count coins meeting min age requirement
+
+        if (txin.prevout.n >= txPrev.vout.size())
+            return error("GetCoinAge() : prevout index out of range");
 
         int64_t nValueIn = txPrev.vout[txin.prevout.n].nValue;
         bnCentSecond += CBigNum(nValueIn) * (nTime-txPrev.nTime) / CENT;
@@ -2161,12 +2169,14 @@ bool CBlock::AcceptBlock()
     // Verify hash target and signature of coinstake tx
     if (IsProofOfStake())
     {
+        printf("AcceptBlock: CheckProofOfStake for %s\n", hash.ToString().substr(0,20).c_str());
         uint256 targetProofOfStake;
         if (!CheckProofOfStake(vtx[1], nBits, hashProof, targetProofOfStake))
         {
             printf("WARNING: AcceptBlock(): check proof-of-stake failed for block %s\n", hash.ToString().c_str());
             return false; // do not error here as we expect this during initial block download
         }
+        printf("AcceptBlock: CheckProofOfStake OK for %s\n", hash.ToString().substr(0,20).c_str());
     }
     // PoW is checked in CheckBlock()
     if (IsProofOfWork())
@@ -2255,9 +2265,15 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
     if (pblock->IsProofOfStake() && setStakeSeen.count(pblock->GetProofOfStake()) && !mapOrphanBlocksByPrev.count(hash) && !Checkpoints::WantedByPendingSyncCheckpoint(hash))
         return error("ProcessBlock() : duplicate proof-of-stake (%s, %d) for block %s", pblock->GetProofOfStake().first.ToString().c_str(), pblock->GetProofOfStake().second, hash.ToString().c_str());
 
+    if (pblock->IsProofOfStake())
+        printf("ProcessBlock: validating proof-of-stake block %s\n", hash.ToString().substr(0,20).c_str());
+
     // Preliminary checks
     if (!pblock->CheckBlock())
         return error("ProcessBlock() : CheckBlock FAILED");
+
+    if (pblock->IsProofOfStake())
+        printf("ProcessBlock: CheckBlock OK for PoS %s\n", hash.ToString().substr(0,20).c_str());
 
     CBlockIndex* pcheckpoint = Checkpoints::GetLastSyncCheckpoint();
     if (pcheckpoint && pblock->hashPrevBlock != hashBestChain && !Checkpoints::WantedByPendingSyncCheckpoint(hash))
@@ -2318,6 +2334,9 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
         }
         return true;
     }
+
+    if (pblock->IsProofOfStake())
+        printf("ProcessBlock: AcceptBlock for PoS %s\n", hash.ToString().substr(0,20).c_str());
 
     // Store to disk
     if (!pblock->AcceptBlock())
@@ -2407,6 +2426,9 @@ bool CBlock::CheckBlockSignature() const
     if (IsProofOfWork())
         return vchBlockSig.empty();
 
+    if (vtx.size() < 2 || vtx[1].vout.size() < 2)
+        return error("CheckBlockSignature() : proof-of-stake block missing coinstake output");
+
     vector<valtype> vSolutions;
     txnouttype whichType;
 
@@ -2417,6 +2439,8 @@ bool CBlock::CheckBlockSignature() const
 
     if (whichType == TX_PUBKEY)
     {
+        if (vSolutions.empty())
+            return false;
         valtype& vchPubKey = vSolutions[0];
         CKey key;
         if (!key.SetPubKey(vchPubKey))

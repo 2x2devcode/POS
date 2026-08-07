@@ -27,7 +27,8 @@ LIBS= \
 DEFS=-DWIN32 -D_WINDOWS -DBOOST_THREAD_USE_LIB -DBOOST_SPIRIT_THREADSAFE
 DEBUGFLAGS=-g
 CFLAGS=-mthreads -O3 -msse2 -w -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter $(DEBUGFLAGS) $(DEFS) $(INCLUDEPATHS)
-LDFLAGS=-Wl,--dynamicbase -Wl,--nxcompat
+# 8 MiB default commit stack (main thread); worker threads use NewThread attrs
+LDFLAGS=-Wl,--dynamicbase -Wl,--nxcompat -Wl,--stack,8388608
 
 TESTDEFS = -DTEST_DATA_DIR=$(abspath test/data)
 

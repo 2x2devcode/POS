@@ -1383,7 +1383,17 @@ bool NewThread(void(*pfn)(void*), void* parg)
 {
     try
     {
+        // Windows default thread stacks are ~1 MiB. PoS validation (and previously
+        // scrypt) can nest deep enough on the message-handler thread to overflow and
+        // fault with ACCESS_VIOLATION (0xc0000005) — seen right after the first
+        // proof-of-stake block during IBD on native Windows GUI builds.
+#ifdef WIN32
+        boost::thread::attributes attrs;
+        attrs.set_stack_size(8 * 1024 * 1024);
+        boost::thread(attrs, pfn, parg); // detaches when out of scope
+#else
         boost::thread(pfn, parg); // thread detaches when out of scope
+#endif
     } catch(boost::thread_resource_error &e) {
         printf("Error creating thread: %s\n", e.what());
         return false;
