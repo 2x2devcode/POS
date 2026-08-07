@@ -50,6 +50,8 @@ QMAKE_LFLAGS *= -fstack-protector-all --param ssp-buffer-size=1
 }
 # for extra security on Windows: enable ASLR and DEP via GCC linker flags
 win32:QMAKE_LFLAGS *= -Wl,--dynamicbase -Wl,--nxcompat
+# 8 MiB default commit stack — PoS IBD on MinGW overflowed the ~1 MiB default
+win32:QMAKE_LFLAGS *= -Wl,--stack,8388608
 # Fully static MinGW runtime so the .exe does not need libwinpthread-1.dll /
 # libgcc_s_seh-1.dll / libstdc++-6.dll next to it on the target PC.
 win32:QMAKE_LFLAGS += -static -static-libgcc -static-libstdc++
@@ -115,15 +117,13 @@ QMAKE_EXTRA_TARGETS += genleveldb
 # Gross ugly hack that depends on qmake internals, unfortunately there is no other way to do it.
 QMAKE_CLEAN += $$PWD/src/leveldb/libleveldb.a; cd $$PWD/src/leveldb ; $(MAKE) clean
 
-# regenerate src/build.h
-!windows|contains(USE_BUILD_INFO, 1) {
-    genbuild.depends = FORCE
-    genbuild.commands = cd $$PWD; /bin/sh share/genbuild.sh $$OUT_PWD/build/build.h
-    genbuild.target = $$OUT_PWD/build/build.h
-    PRE_TARGETDEPS += $$OUT_PWD/build/build.h
-    QMAKE_EXTRA_TARGETS += genbuild
-    DEFINES += HAVE_BUILD_INFO
-}
+# regenerate build.h (always — Windows builds previously stayed stuck on g32a928e)
+genbuild.depends = FORCE
+genbuild.commands = cd $$PWD; /bin/sh share/genbuild.sh $$OUT_PWD/build/build.h
+genbuild.target = $$OUT_PWD/build/build.h
+PRE_TARGETDEPS += $$OUT_PWD/build/build.h
+QMAKE_EXTRA_TARGETS += genbuild
+DEFINES += HAVE_BUILD_INFO
 
 contains(USE_O3, 1) {
     message(Building O3 optimization flag)

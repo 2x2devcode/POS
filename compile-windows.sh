@@ -912,7 +912,7 @@ build_gui() {
         # which becomes "binlrelease.exe" on Linux (Error 127).
         "QMAKE_LRELEASE=${host_lrelease}"
         # Force fully static MinGW runtime (no libstdc++-6.dll / libwinpthread-1.dll)
-        "QMAKE_LFLAGS+=-static -static-libgcc -static-libstdc++"
+        "QMAKE_LFLAGS+=-static -static-libgcc -static-libstdc++ -Wl,--stack,8388608"
         "LIBS+=${static_rt_libs}"
     )
 

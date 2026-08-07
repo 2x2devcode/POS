@@ -33,11 +33,12 @@ const std::string CLIENT_NAME("Satoshi");
 #    include "build.h"
 #endif
 
-// git will put "#define GIT_ARCHIVE 1" on the next line inside archives. 
-#define GIT_ARCHIVE 1
+// git archive export-subst may define GIT_ARCHIVE and fill Format placeholders.
+// Do NOT hardcode GIT_ARCHIVE here — that pinned every build to g32a928e and
+// made crash reports impossible to match to a real commit.
 #ifdef GIT_ARCHIVE
-#    define GIT_COMMIT_ID "32a928e"
-#    define GIT_COMMIT_DATE "$Format:%cD"
+#    define GIT_COMMIT_ID "$Format:%h$"
+#    define GIT_COMMIT_DATE "$Format:%cD$"
 #endif
 
 #define BUILD_DESC_FROM_COMMIT(maj,min,rev,build,commit) \
