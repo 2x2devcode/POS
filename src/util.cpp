@@ -1390,7 +1390,8 @@ bool NewThread(void(*pfn)(void*), void* parg)
 #ifdef WIN32
         boost::thread::attributes attrs;
         attrs.set_stack_size(8 * 1024 * 1024);
-        boost::thread(attrs, pfn, parg); // detaches when out of scope
+        // Lambda start routine — MinGW Boost rejects thread(attrs, pfn, parg).
+        boost::thread(attrs, [pfn, parg]() { pfn(parg); }); // detaches when out of scope
 #else
         boost::thread(pfn, parg); // thread detaches when out of scope
 #endif
