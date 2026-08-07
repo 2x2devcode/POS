@@ -1381,6 +1381,7 @@ void RenameThread(const char* name)
 
 #ifdef WIN32
 #include <windows.h>
+#include <process.h>
 #include <new>
 
 namespace {
@@ -1389,7 +1390,11 @@ struct NewThreadArg {
     void* parg;
 };
 
-DWORD WINAPI NewThreadWin32Shim(LPVOID p)
+// _beginthreadex (not CreateThread): initializes CRT per-thread state.
+// CreateThread + 16 MiB fixed the PoS stack overflow, but on native Windows
+// GUI the CRT-less worker then ACCESS_VIOLATION'd inside CheckTransaction on
+// the first coinstake (after "CheckTransaction[1]"). Wine was more forgiving.
+unsigned __stdcall NewThreadWin32Shim(void* p)
 {
     NewThreadArg* a = static_cast<NewThreadArg*>(p);
     void (*fn)(void*) = a->pfn;
@@ -1404,30 +1409,32 @@ DWORD WINAPI NewThreadWin32Shim(LPVOID p)
 bool NewThread(void(*pfn)(void*), void* parg)
 {
 #ifdef WIN32
-    // Boost thread::attributes::set_stack_size is unreliable with MinGW /
-    // winpthreads: native Windows GUI still crashed in CheckBlockSignature
-    // (OpenSSL ECDSA) on the first PoS block with the default ~1 MiB stack.
-    // CreateThread with an explicit reserve size is the dependable fix.
+    // MinGW winpthreads stack attributes are unreliable; reserve 16 MiB via
+    // _beginthreadex so MessageHandler/StakeMiner have CRT + deep PoS stacks.
     NewThreadArg* arg = new (std::nothrow) NewThreadArg;
     if (!arg)
         return false;
     arg->pfn = pfn;
     arg->parg = parg;
 
-    HANDLE h = CreateThread(
+    uintptr_t handle = _beginthreadex(
         NULL,
-        16 * 1024 * 1024, // 16 MiB reserved stack
+        16u * 1024u * 1024u, // 16 MiB stack
         NewThreadWin32Shim,
         arg,
-        STACK_SIZE_PARAM_IS_A_RESERVATION,
+        (unsigned)STACK_SIZE_PARAM_IS_A_RESERVATION,
         NULL);
-    if (h == NULL)
+    // Some CRT builds ignore/reject STACK_SIZE_PARAM_IS_A_RESERVATION on
+    // _beginthreadex; retry with a plain 16 MiB committed stack.
+    if (handle == 0)
+        handle = _beginthreadex(NULL, 16u * 1024u * 1024u, NewThreadWin32Shim, arg, 0, NULL);
+    if (handle == 0)
     {
         delete arg;
-        printf("Error creating thread: CreateThread failed (%lu)\n", GetLastError());
+        printf("Error creating thread: _beginthreadex failed (%lu)\n", GetLastError());
         return false;
     }
-    CloseHandle(h);
+    CloseHandle((HANDLE)handle);
     return true;
 #else
     try

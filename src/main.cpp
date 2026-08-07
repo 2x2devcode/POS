@@ -522,16 +522,35 @@ int CMerkleTx::SetMerkleBranch(const CBlock* pblock)
 
 bool CTransaction::CheckTransaction() const
 {
+    const bool fTrace = (nBestHeight < 100) && IsCoinStake();
+    if (fTrace)
+    {
+        printf("CheckTransaction: enter coinstake vin=%u vout=%u\n",
+               (unsigned)vin.size(), (unsigned)vout.size());
+        fflush(stdout);
+    }
+
     // Basic checks that don't depend on any context
     if (vin.empty())
         return DoS(10, error("CTransaction::CheckTransaction() : vin empty"));
     if (vout.empty())
         return DoS(10, error("CTransaction::CheckTransaction() : vout empty"));
-    // Size limits
+
+    // Size limits — walk sizes without allocating a stream buffer
+    if (fTrace)
+    {
+        printf("CheckTransaction: GetSerializeSize\n");
+        fflush(stdout);
+    }
     if (::GetSerializeSize(*this, SER_NETWORK, PROTOCOL_VERSION) > MAX_BLOCK_SIZE)
         return DoS(100, error("CTransaction::CheckTransaction() : size limits failed"));
 
     // Check for negative or overflow output values
+    if (fTrace)
+    {
+        printf("CheckTransaction: check vout values\n");
+        fflush(stdout);
+    }
     int64_t nValueOut = 0;
     for (unsigned int i = 0; i < vout.size(); i++)
     {
@@ -547,13 +566,19 @@ bool CTransaction::CheckTransaction() const
             return DoS(100, error("CTransaction::CheckTransaction() : txout total out of range"));
     }
 
-    // Check for duplicate inputs
-    set<COutPoint> vInOutPoints;
-    BOOST_FOREACH(const CTxIn& txin, vin)
+    // Check for duplicate inputs (O(n^2) — avoids set<> allocator on IBD path)
+    if (fTrace)
     {
-        if (vInOutPoints.count(txin.prevout))
-            return false;
-        vInOutPoints.insert(txin.prevout);
+        printf("CheckTransaction: check duplicate inputs\n");
+        fflush(stdout);
+    }
+    for (unsigned int i = 0; i < vin.size(); i++)
+    {
+        for (unsigned int j = i + 1; j < vin.size(); j++)
+        {
+            if (vin[i].prevout == vin[j].prevout)
+                return false;
+        }
     }
 
     if (IsCoinBase())
@@ -563,11 +588,21 @@ bool CTransaction::CheckTransaction() const
     }
     else
     {
-        BOOST_FOREACH(const CTxIn& txin, vin)
-            if (txin.prevout.IsNull())
+        if (fTrace)
+        {
+            printf("CheckTransaction: check prevouts\n");
+            fflush(stdout);
+        }
+        for (unsigned int i = 0; i < vin.size(); i++)
+            if (vin[i].prevout.IsNull())
                 return DoS(10, error("CTransaction::CheckTransaction() : prevout is null"));
     }
 
+    if (fTrace)
+    {
+        printf("CheckTransaction: coinstake OK\n");
+        fflush(stdout);
+    }
     return true;
 }
 
