@@ -29,6 +29,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <new>
 
 #include "scrypt.h"
 #include "pbkdf2.h"
@@ -166,14 +167,25 @@ uint256 scrypt(const void* data, size_t datalen, const void* salt, size_t saltle
 
 uint256 scrypt_hash(const void* input, size_t inputlen)
 {
-    unsigned char scratchpad[SCRYPT_BUFFER_SIZE];
-    return scrypt_nosalt(input, inputlen, scratchpad);
+    // Heap allocation: a ~128 KiB stack buffer here causes ACCESS_VIOLATION
+    // (0xc0000005) on Windows MinGW when called from deep network/GUI stacks
+    // (e.g. right after "received block" during CheckBlock/GetPoWHash).
+    unsigned char *scratchpad = (unsigned char *)malloc(SCRYPT_BUFFER_SIZE);
+    if (!scratchpad)
+        throw std::bad_alloc();
+    uint256 result = scrypt_nosalt(input, inputlen, scratchpad);
+    free(scratchpad);
+    return result;
 }
 
 uint256 scrypt_salted_hash(const void* input, size_t inputlen, const void* salt, size_t saltlen)
 {
-    unsigned char scratchpad[SCRYPT_BUFFER_SIZE];
-    return scrypt(input, inputlen, salt, saltlen, scratchpad);
+    unsigned char *scratchpad = (unsigned char *)malloc(SCRYPT_BUFFER_SIZE);
+    if (!scratchpad)
+        throw std::bad_alloc();
+    uint256 result = scrypt(input, inputlen, salt, saltlen, scratchpad);
+    free(scratchpad);
+    return result;
 }
 
 uint256 scrypt_salted_multiround_hash(const void* input, size_t inputlen, const void* salt, size_t saltlen, const unsigned int nRounds)
@@ -192,7 +204,11 @@ uint256 scrypt_salted_multiround_hash(const void* input, size_t inputlen, const 
 
 uint256 scrypt_blockhash(const void* input)
 {
-    unsigned char scratchpad[SCRYPT_BUFFER_SIZE];
-    return scrypt_nosalt(input, 80, scratchpad);
+    unsigned char *scratchpad = (unsigned char *)malloc(SCRYPT_BUFFER_SIZE);
+    if (!scratchpad)
+        throw std::bad_alloc();
+    uint256 result = scrypt_nosalt(input, 80, scratchpad);
+    free(scratchpad);
+    return result;
 }
 

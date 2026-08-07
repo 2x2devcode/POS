@@ -542,8 +542,15 @@ void StakeMiner(CWallet *pwallet)
                 return;
         }
 
-        while (vNodes.empty() || IsInitialBlockDownload())
+        while (true)
         {
+            bool fNoNodes;
+            {
+                LOCK(cs_vNodes);
+                fNoNodes = vNodes.empty();
+            }
+            if (!fNoNodes && !IsInitialBlockDownload())
+                break;
             nLastCoinStakeSearchInterval = 0;
             fTryToSync = true;
             MilliSleep(1000);
@@ -554,7 +561,12 @@ void StakeMiner(CWallet *pwallet)
         if (fTryToSync)
         {
             fTryToSync = false;
-            if (vNodes.size() < 3 || nBestHeight < GetNumBlocksOfPeers())
+            int nNodes;
+            {
+                LOCK(cs_vNodes);
+                nNodes = vNodes.size();
+            }
+            if (nNodes < 3 || nBestHeight < GetNumBlocksOfPeers())
             {
                 MilliSleep(60000);
                 continue;
