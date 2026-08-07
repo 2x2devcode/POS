@@ -1190,8 +1190,18 @@ void static InvalidChainFound(CBlockIndex* pindexNew)
         uiInterface.NotifyBlocksChanged();
     }
 
-    uint256 nBestInvalidBlockTrust = pindexNew->nChainTrust - pindexNew->pprev->nChainTrust;
-    uint256 nBestBlockTrust = pindexBest->nHeight != 0 ? (pindexBest->nChainTrust - pindexBest->pprev->nChainTrust) : pindexBest->nChainTrust;
+    uint256 nBestInvalidBlockTrust = 0;
+    if (pindexNew->pprev)
+        nBestInvalidBlockTrust = pindexNew->nChainTrust - pindexNew->pprev->nChainTrust;
+    else
+        nBestInvalidBlockTrust = pindexNew->nChainTrust;
+
+    uint256 nBestBlockTrust = 0;
+    if (pindexBest) {
+        nBestBlockTrust = pindexBest->nHeight != 0 && pindexBest->pprev
+            ? (pindexBest->nChainTrust - pindexBest->pprev->nChainTrust)
+            : pindexBest->nChainTrust;
+    }
 
     printf("InvalidChainFound: invalid block=%s  height=%d  trust=%s  blocktrust=%"PRId64"  date=%s\n",
       pindexNew->GetBlockHash().ToString().substr(0,20).c_str(), pindexNew->nHeight,
@@ -1199,9 +1209,9 @@ void static InvalidChainFound(CBlockIndex* pindexNew)
       DateTimeStrFormat("%x %H:%M:%S", pindexNew->GetBlockTime()).c_str());
     printf("InvalidChainFound:  current best=%s  height=%d  trust=%s  blocktrust=%"PRId64"  date=%s\n",
       hashBestChain.ToString().substr(0,20).c_str(), nBestHeight,
-      CBigNum(pindexBest->nChainTrust).ToString().c_str(),
+      CBigNum(pindexBest ? pindexBest->nChainTrust : 0).ToString().c_str(),
       nBestBlockTrust.Get64(),
-      DateTimeStrFormat("%x %H:%M:%S", pindexBest->GetBlockTime()).c_str());
+      DateTimeStrFormat("%x %H:%M:%S", pindexBest ? pindexBest->GetBlockTime() : 0).c_str());
 }
 
 
@@ -2255,16 +2265,20 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
         bnNewBlock.SetCompact(pblock->nBits);
         CBigNum bnRequired;
 
-        if (pblock->IsProofOfStake())
-            bnRequired.SetCompact(ComputeMinStake(GetLastBlockIndex(pcheckpoint, true)->nBits, deltaTime, pblock->nTime));
-        else
-            bnRequired.SetCompact(ComputeMinWork(GetLastBlockIndex(pcheckpoint, false)->nBits, deltaTime));
-
-        if (bnNewBlock > bnRequired)
+        const CBlockIndex* pindexLast = GetLastBlockIndex(pcheckpoint, pblock->IsProofOfStake());
+        if (pindexLast)
         {
-            if (pfrom)
-                pfrom->Misbehaving(100);
-            return error("ProcessBlock() : block with too little %s", pblock->IsProofOfStake()? "proof-of-stake" : "proof-of-work");
+            if (pblock->IsProofOfStake())
+                bnRequired.SetCompact(ComputeMinStake(pindexLast->nBits, deltaTime, pblock->nTime));
+            else
+                bnRequired.SetCompact(ComputeMinWork(pindexLast->nBits, deltaTime));
+
+            if (bnNewBlock > bnRequired)
+            {
+                if (pfrom)
+                    pfrom->Misbehaving(100);
+                return error("ProcessBlock() : block with too little %s", pblock->IsProofOfStake()? "proof-of-stake" : "proof-of-work");
+            }
         }
     }
 
