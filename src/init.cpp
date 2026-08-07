@@ -46,6 +46,9 @@ void ExitTimeout(void* parg)
 {
 #ifdef WIN32
     MilliSleep(5000);
+    // Ensure debug.log is flushed before hard-kill (ExitProcess skips C++ destructors).
+    fflush(stdout);
+    fflush(stderr);
     ExitProcess(0);
 #endif
 }
@@ -202,12 +205,18 @@ int main(int argc, char* argv[])
 
 bool static InitError(const std::string &str)
 {
+    // Always write to debug.log / console — GUI MessageBox alone is easy to miss
+    // (splash still visible) and previously left debug.log with no error at all.
+    strMiscWarning = str;
+    printf("ERROR: %s\n", str.c_str());
+    fprintf(stderr, "ERROR: %s\n", str.c_str());
     uiInterface.ThreadSafeMessageBox(str, _("POS"), CClientUIInterface::OK | CClientUIInterface::MODAL);
     return false;
 }
 
 bool static InitWarning(const std::string &str)
 {
+    printf("Warning: %s\n", str.c_str());
     uiInterface.ThreadSafeMessageBox(str, _("POS"), CClientUIInterface::OK | CClientUIInterface::ICON_EXCLAMATION | CClientUIInterface::MODAL);
     return true;
 }
@@ -504,13 +513,29 @@ bool AppInit2()
     if (boost::filesystem::path(strWalletFileName).filename().string() != strWalletFileName)
         return InitError(strprintf(_("Wallet %s resides outside data directory %s."), strWalletFileName.c_str(), strDataDir.c_str()));
 
+    // Open debug.log BEFORE the datadir lock so lock/init failures are recorded.
+    // Previously a lock conflict left debug.log unchanged — looking like a "silent" quit.
+    if (GetBoolArg("-shrinkdebugfile", !fDebug))
+        ShrinkDebugFile();
+    printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+    printf("POS version %s (%s)\n", FormatFullVersion().c_str(), CLIENT_DATE.c_str());
+    printf("Using OpenSSL version %s\n", OpenSSLVersionString());
+    if (!fLogTimestamps)
+        printf("Startup time: %s\n", DateTimeStrFormat("%x %H:%M:%S", GetTime()).c_str());
+    printf("Default data directory %s\n", GetDefaultDataDir().string().c_str());
+    printf("Used data directory %s\n", strDataDir.c_str());
+
     // Make sure only a single Bitcoin process is using the data directory.
     boost::filesystem::path pathLockFile = GetDataDir() / ".lock";
     FILE* file = fopen(pathLockFile.string().c_str(), "a"); // empty lock file; created if it doesn't exist.
     if (file) fclose(file);
-    static boost::interprocess::file_lock lock(pathLockFile.string().c_str());
-    if (!lock.try_lock())
-        return InitError(strprintf(_("Cannot obtain a lock on data directory %s.  POS is probably already running."), strDataDir.c_str()));
+    try {
+        static boost::interprocess::file_lock lock(pathLockFile.string().c_str());
+        if (!lock.try_lock())
+            return InitError(strprintf(_("Cannot obtain a lock on data directory %s.  POS is probably already running (close posd.exe / pos-qt.exe, or delete %%APPDATA%%\\POS\\.lock if no wallet is running)."), strDataDir.c_str()));
+    } catch (const std::exception& e) {
+        return InitError(strprintf(_("Cannot obtain a lock on data directory %s (%s). Close any running POS wallet and try again."), strDataDir.c_str(), e.what()));
+    }
 
 #if !defined(WIN32) && !defined(QT_GUI)
     if (fDaemon)
@@ -534,15 +559,6 @@ bool AppInit2()
     }
 #endif
 
-    if (GetBoolArg("-shrinkdebugfile", !fDebug))
-        ShrinkDebugFile();
-    printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
-    printf("POS version %s (%s)\n", FormatFullVersion().c_str(), CLIENT_DATE.c_str());
-    printf("Using OpenSSL version %s\n", OpenSSLVersionString());
-    if (!fLogTimestamps)
-        printf("Startup time: %s\n", DateTimeStrFormat("%x %H:%M:%S", GetTime()).c_str());
-    printf("Default data directory %s\n", GetDefaultDataDir().string().c_str());
-    printf("Used data directory %s\n", strDataDir.c_str());
     std::ostringstream strErrors;
 
     if (fDaemon)

@@ -16,6 +16,9 @@
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
 
+#ifdef WIN32
+#include <windows.h>
+#endif
 
 using namespace std;
 using namespace boost;
@@ -2428,7 +2431,32 @@ bool CBlock::CheckBlockSignature() const
 
 bool CheckDiskSpace(uint64_t nAdditionalBytes)
 {
-    uint64_t nFreeBytesAvailable = boost::filesystem::space(GetDataDir()).available;
+    uint64_t nFreeBytesAvailable = 0;
+
+#ifdef WIN32
+    // boost::filesystem::space() often reports 0 under MinGW on Windows even when
+    // the disk has plenty of free space, which previously caused a silent quit.
+    {
+        ULARGE_INTEGER freeBytesAvailableToCaller, totalNumberOfBytes, totalNumberOfFreeBytes;
+        std::string path = GetDataDir().string();
+        if (GetDiskFreeSpaceExA(path.c_str(), &freeBytesAvailableToCaller, &totalNumberOfBytes, &totalNumberOfFreeBytes))
+            nFreeBytesAvailable = freeBytesAvailableToCaller.QuadPart;
+        else
+            printf("GetDiskFreeSpaceEx failed for %s (error %lu); skipping disk-space check\n",
+                   path.c_str(), GetLastError());
+    }
+#else
+    try {
+        nFreeBytesAvailable = boost::filesystem::space(GetDataDir()).available;
+    } catch (const boost::filesystem::filesystem_error& e) {
+        printf("Error checking disk space: %s; skipping disk-space check\n", e.what());
+        return true;
+    }
+#endif
+
+    // Treat 0 as "unknown" (common false reading) rather than forcing shutdown.
+    if (nFreeBytesAvailable == 0)
+        return true;
 
     // Check for nMinDiskSpace bytes (currently 50MB)
     if (nFreeBytesAvailable < nMinDiskSpace + nAdditionalBytes)
@@ -2436,7 +2464,7 @@ bool CheckDiskSpace(uint64_t nAdditionalBytes)
         fShutdown = true;
         string strMessage = _("Warning: Disk space is low!");
         strMiscWarning = strMessage;
-        printf("*** %s\n", strMessage.c_str());
+        printf("*** %s (available=%" PRIu64 " bytes)\n", strMessage.c_str(), nFreeBytesAvailable);
         uiInterface.ThreadSafeMessageBox(strMessage, "POS", CClientUIInterface::OK | CClientUIInterface::ICON_EXCLAMATION | CClientUIInterface::MODAL);
         StartShutdown();
         return false;

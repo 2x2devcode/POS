@@ -608,7 +608,10 @@ void BitcoinGUI::error(const QString &title, const QString &message, bool modal)
     // Report errors from network/worker thread
     if(modal)
     {
-        QMessageBox::critical(this, title, message, QMessageBox::Ok, QMessageBox::Ok);
+        // Use a NULL parent when the main window is not visible yet so the
+        // dialog is not trapped behind the splash screen / hidden window.
+        QWidget *parent = isVisible() ? this : 0;
+        QMessageBox::critical(parent, title, message, QMessageBox::Ok, QMessageBox::Ok);
     } else {
         notificator->notify(Notificator::Critical, title, message);
     }
