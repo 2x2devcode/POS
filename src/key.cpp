@@ -311,17 +311,36 @@ CPrivKey CKey::GetPrivKey() const
 
 bool CKey::SetPubKey(const CPubKey& vchPubKey)
 {
-    const unsigned char* pbegin = &vchPubKey.vchPubKey[0];
-    if (o2i_ECPublicKey(&pkey, &pbegin, vchPubKey.vchPubKey.size()))
+    if (!pkey)
+        return false;
+    if (vchPubKey.vchPubKey.size() != 33 && vchPubKey.vchPubKey.size() != 65)
+        return false;
+
+    // Prefer EC_POINT_oct2point over o2i_ECPublicKey — the latter has been
+    // implicated in ACCESS_VIOLATION crashes with OpenSSL 3 on Windows/MinGW
+    // when verifying the first proof-of-stake block signature.
+    const EC_GROUP* group = EC_KEY_get0_group(pkey);
+    if (!group)
+        return false;
+
+    EC_POINT* point = EC_POINT_new(group);
+    if (!point)
+        return false;
+
+    int ok = EC_POINT_oct2point(group, point,
+                                &vchPubKey.vchPubKey[0], vchPubKey.vchPubKey.size(),
+                                NULL);
+    if (!ok || !EC_KEY_set_public_key(pkey, point))
     {
-        fSet = true;
-        if (vchPubKey.vchPubKey.size() == 33)
-            SetCompressedPubKey();
-        return true;
+        EC_POINT_free(point);
+        return false;
     }
-    pkey = NULL;
-    Reset();
-    return false;
+    EC_POINT_free(point);
+
+    fSet = true;
+    if (vchPubKey.vchPubKey.size() == 33)
+        SetCompressedPubKey();
+    return true;
 }
 
 CPubKey CKey::GetPubKey() const
@@ -459,13 +478,24 @@ bool CKey::SetCompactSignature(uint256 hash, const std::vector<unsigned char>& v
 
 bool CKey::Verify(uint256 hash, const std::vector<unsigned char>& vchSig)
 {
-    if (!pkey || vchSig.empty())
-        return false;
-    // -1 = error, 0 = bad sig, 1 = good
-    if (ECDSA_verify(0, (unsigned char*)&hash, sizeof(hash), &vchSig[0], (int)vchSig.size(), pkey) != 1)
+    if (!pkey || !fSet || vchSig.empty())
         return false;
 
-    return true;
+    // Parse DER explicitly then ECDSA_do_verify. ECDSA_verify() has crashed
+    // with ACCESS_VIOLATION (0xc0000005) under OpenSSL 3 + MinGW during the
+    // first PoS CheckBlockSignature on native Windows GUI builds.
+    const unsigned char* pbegin = &vchSig[0];
+    ECDSA_SIG* sig = d2i_ECDSA_SIG(NULL, &pbegin, (long)vchSig.size());
+    if (!sig)
+        return false;
+
+    // Require the DER to consume the whole buffer (Bitcoin-style strictness).
+    bool fOk = (pbegin == &vchSig[0] + vchSig.size());
+    if (fOk)
+        fOk = (ECDSA_do_verify((unsigned char*)&hash, sizeof(hash), sig, pkey) == 1);
+
+    ECDSA_SIG_free(sig);
+    return fOk;
 }
 
 bool CKey::IsValid()

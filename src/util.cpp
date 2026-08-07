@@ -1379,25 +1379,64 @@ void RenameThread(const char* name)
 #endif
 }
 
+#ifdef WIN32
+#include <windows.h>
+#include <new>
+
+namespace {
+struct NewThreadArg {
+    void (*pfn)(void*);
+    void* parg;
+};
+
+DWORD WINAPI NewThreadWin32Shim(LPVOID p)
+{
+    NewThreadArg* a = static_cast<NewThreadArg*>(p);
+    void (*fn)(void*) = a->pfn;
+    void* parg = a->parg;
+    delete a;
+    fn(parg);
+    return 0;
+}
+} // namespace
+#endif
+
 bool NewThread(void(*pfn)(void*), void* parg)
 {
+#ifdef WIN32
+    // Boost thread::attributes::set_stack_size is unreliable with MinGW /
+    // winpthreads: native Windows GUI still crashed in CheckBlockSignature
+    // (OpenSSL ECDSA) on the first PoS block with the default ~1 MiB stack.
+    // CreateThread with an explicit reserve size is the dependable fix.
+    NewThreadArg* arg = new (std::nothrow) NewThreadArg;
+    if (!arg)
+        return false;
+    arg->pfn = pfn;
+    arg->parg = parg;
+
+    HANDLE h = CreateThread(
+        NULL,
+        16 * 1024 * 1024, // 16 MiB reserved stack
+        NewThreadWin32Shim,
+        arg,
+        STACK_SIZE_PARAM_IS_A_RESERVATION,
+        NULL);
+    if (h == NULL)
+    {
+        delete arg;
+        printf("Error creating thread: CreateThread failed (%lu)\n", GetLastError());
+        return false;
+    }
+    CloseHandle(h);
+    return true;
+#else
     try
     {
-        // Windows default thread stacks are ~1 MiB. PoS validation (and previously
-        // scrypt) can nest deep enough on the message-handler thread to overflow and
-        // fault with ACCESS_VIOLATION (0xc0000005) — seen right after the first
-        // proof-of-stake block during IBD on native Windows GUI builds.
-#ifdef WIN32
-        boost::thread::attributes attrs;
-        attrs.set_stack_size(8 * 1024 * 1024);
-        // Lambda start routine — MinGW Boost rejects thread(attrs, pfn, parg).
-        boost::thread(attrs, [pfn, parg]() { pfn(parg); }); // detaches when out of scope
-#else
         boost::thread(pfn, parg); // thread detaches when out of scope
-#endif
     } catch(boost::thread_resource_error &e) {
         printf("Error creating thread: %s\n", e.what());
         return false;
     }
     return true;
+#endif
 }

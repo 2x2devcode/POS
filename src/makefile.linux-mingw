@@ -48,8 +48,8 @@ LIBS= \
 DEFS=-D_MT -DWIN32 -D_WINDOWS -DBOOST_THREAD_USE_LIB -DBOOST_SPIRIT_THREADSAFE -DBOOST_BIND_GLOBAL_PLACEHOLDERS -DOPENSSL_SUPPRESS_DEPRECATED -D__USE_MINGW_ANSI_STDIO=1
 DEBUGFLAGS=
 CFLAGS=-O2 -std=c++17 -msse2 -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter -Wno-deprecated-declarations -Wno-deprecated-copy -Wno-literal-suffix -Wno-format-extra-args $(DEBUGFLAGS) $(DEFS) $(INCLUDEPATHS)
-# 8 MiB default commit stack (main thread); worker threads use NewThread attrs
-LDFLAGS=-Wl,--dynamicbase -Wl,--nxcompat -Wl,--stack,8388608 -static -static-libgcc -static-libstdc++
+# 16 MiB default commit stack (main thread); worker threads use CreateThread reserve
+LDFLAGS=-Wl,--dynamicbase -Wl,--nxcompat -Wl,--stack,16777216 -static -static-libgcc -static-libstdc++
 
 ifndef USE_UPNP
 	override USE_UPNP = -

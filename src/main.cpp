@@ -2085,8 +2085,13 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
             return DoS(50, error("CheckBlock() : coinstake timestamp violation nTimeBlock=%"PRId64" nTimeTx=%u", GetBlockTime(), vtx[1].nTime));
 
         // PosCoin: check proof-of-stake block signature
-        if (fCheckSig && !CheckBlockSignature())
-            return DoS(100, error("CheckBlock() : bad proof-of-stake block signature"));
+        if (fCheckSig)
+        {
+            printf("CheckBlock: CheckBlockSignature for PoS block\n");
+            if (!CheckBlockSignature())
+                return DoS(100, error("CheckBlock() : bad proof-of-stake block signature"));
+            printf("CheckBlock: CheckBlockSignature OK\n");
+        }
     }
 
     // Check transactions
@@ -2435,22 +2440,24 @@ bool CBlock::CheckBlockSignature() const
     const CTxOut& txout = vtx[1].vout[1];
 
     if (!Solver(txout.scriptPubKey, whichType, vSolutions))
-        return false;
+        return error("CheckBlockSignature() : Solver failed");
 
     if (whichType == TX_PUBKEY)
     {
         if (vSolutions.empty())
-            return false;
+            return error("CheckBlockSignature() : empty pubkey solution");
         valtype& vchPubKey = vSolutions[0];
         CKey key;
         if (!key.SetPubKey(vchPubKey))
-            return false;
+            return error("CheckBlockSignature() : SetPubKey failed");
         if (vchBlockSig.empty())
-            return false;
-        return key.Verify(GetHash(), vchBlockSig);
+            return error("CheckBlockSignature() : empty block signature");
+        if (!key.Verify(GetHash(), vchBlockSig))
+            return error("CheckBlockSignature() : Verify failed");
+        return true;
     }
 
-    return false;
+    return error("CheckBlockSignature() : unsupported script type %d", (int)whichType);
 }
 
 bool CheckDiskSpace(uint64_t nAdditionalBytes)
