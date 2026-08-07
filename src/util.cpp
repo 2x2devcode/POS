@@ -108,8 +108,8 @@ public:
         CRYPTO_set_locking_callback(locking_callback);
 #endif
 
-#ifdef WIN32
-        // Seed random number generator with screen scrape and other hardware sources
+#if defined(WIN32) && OPENSSL_VERSION_NUMBER < 0x10100000L
+        // Seed RNG from screen scrape (removed/broken on OpenSSL 1.1+/3.x)
         RAND_screen();
 #endif
 

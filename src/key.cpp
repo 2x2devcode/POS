@@ -5,6 +5,7 @@
 #include <map>
 
 #include <openssl/ecdsa.h>
+#include <openssl/err.h>
 #include <openssl/obj_mac.h>
 
 #include "key.h"
@@ -481,20 +482,37 @@ bool CKey::Verify(uint256 hash, const std::vector<unsigned char>& vchSig)
     if (!pkey || !fSet || vchSig.empty())
         return false;
 
-    // Parse DER explicitly then ECDSA_do_verify. ECDSA_verify() has crashed
-    // with ACCESS_VIOLATION (0xc0000005) under OpenSSL 3 + MinGW during the
-    // first PoS CheckBlockSignature on native Windows GUI builds.
-    const unsigned char* pbegin = &vchSig[0];
-    ECDSA_SIG* sig = d2i_ECDSA_SIG(NULL, &pbegin, (long)vchSig.size());
+    // Work on an owned, contiguous copy — never pass live block/tx memory into
+    // OpenSSL d2i (it advances the pointer and has faulted under OpenSSL 3 +
+    // MinGW on native Windows GUI when verifying the first PoS block).
+    std::vector<unsigned char> vch(vchSig.begin(), vchSig.end());
+    const unsigned char* pbegin = &vch[0];
+    ECDSA_SIG* sig = d2i_ECDSA_SIG(NULL, &pbegin, (long)vch.size());
     if (!sig)
+    {
+        ERR_clear_error();
         return false;
+    }
 
     // Require the DER to consume the whole buffer (Bitcoin-style strictness).
-    bool fOk = (pbegin == &vchSig[0] + vchSig.size());
+    bool fOk = (pbegin == &vch[0] + vch.size());
     if (fOk)
-        fOk = (ECDSA_do_verify((unsigned char*)&hash, sizeof(hash), sig, pkey) == 1);
+    {
+        // Verify against a temporary EC_KEY so ECDSA_do_verify cannot leave
+        // the caller's key object in a half-mutated state if OpenSSL faults.
+        EC_KEY* keyTmp = EC_KEY_dup(pkey);
+        if (!keyTmp)
+        {
+            ECDSA_SIG_free(sig);
+            ERR_clear_error();
+            return false;
+        }
+        fOk = (ECDSA_do_verify((unsigned char*)&hash, sizeof(hash), sig, keyTmp) == 1);
+        EC_KEY_free(keyTmp);
+    }
 
     ECDSA_SIG_free(sig);
+    ERR_clear_error();
     return fOk;
 }
 

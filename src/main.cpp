@@ -15,6 +15,8 @@
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
+#include <cstdlib>
+#include <cstring>
 
 #ifdef WIN32
 #include <windows.h>
@@ -2067,7 +2069,10 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
     if (GetBlockTime() > FutureDrift((int64_t)vtx[0].nTime))
         return DoS(50, error("CheckBlock() : coinbase timestamp is too early"));
 
-    if (IsProofOfStake())
+    const bool fPoS = IsProofOfStake();
+    // Verbose breadcrumbs only near genesis / first PoS (native Windows AV hunt)
+    const bool fPoSTrace = fPoS && (nBestHeight < 100);
+    if (fPoS)
     {
         // Coinbase output should be empty if proof-of-stake block
         if (vtx[0].vout.size() != 1 || !vtx[0].vout[0].IsEmpty())
@@ -2083,20 +2088,28 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
         // Check coinstake timestamp
         if (!CheckCoinStakeTimestamp(GetBlockTime(), (int64_t)vtx[1].nTime))
             return DoS(50, error("CheckBlock() : coinstake timestamp violation nTimeBlock=%"PRId64" nTimeTx=%u", GetBlockTime(), vtx[1].nTime));
+    }
 
-        // PosCoin: check proof-of-stake block signature
-        if (fCheckSig)
-        {
-            printf("CheckBlock: CheckBlockSignature for PoS block\n");
-            if (!CheckBlockSignature())
-                return DoS(100, error("CheckBlock() : bad proof-of-stake block signature"));
-            printf("CheckBlock: CheckBlockSignature OK\n");
-        }
+    // Validate transactions / merkle BEFORE OpenSSL ECDSA for PoS block
+    // signatures. Native Windows GUI builds have faulted (0xc0000005) after
+    // CheckBlockSignature OK while walking vtx — isolating ECDSA to the end
+    // keeps structural checks usable as crash breadcrumbs and avoids mixing
+    // OpenSSL ECDSA heap traffic with the tx-walk allocations that follow.
+    if (fPoSTrace)
+    {
+        printf("CheckBlock: PoS structural OK, vtx=%u (pre-sig checks)\n", (unsigned)vtx.size());
+        fflush(stdout);
     }
 
     // Check transactions
-    BOOST_FOREACH(const CTransaction& tx, vtx)
+    for (unsigned int i = 0; i < vtx.size(); i++)
     {
+        if (fPoSTrace)
+        {
+            printf("CheckBlock: CheckTransaction[%u]\n", i);
+            fflush(stdout);
+        }
+        const CTransaction& tx = vtx[i];
         if (!tx.CheckTransaction())
             return DoS(tx.nDoS, error("CheckBlock() : CheckTransaction failed"));
 
@@ -2104,29 +2117,71 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
         if (GetBlockTime() < (int64_t)tx.nTime)
             return DoS(50, error("CheckBlock() : block timestamp earlier than transaction timestamp"));
     }
+    if (fPoSTrace)
+    {
+        printf("CheckBlock: CheckTransaction OK\n");
+        fflush(stdout);
+    }
 
     // Check for duplicate txids. This is caught by ConnectInputs(),
     // but catching it earlier avoids a potential DoS attack:
     set<uint256> uniqueTx;
-    BOOST_FOREACH(const CTransaction& tx, vtx)
-    {
-        uniqueTx.insert(tx.GetHash());
-    }
+    for (unsigned int i = 0; i < vtx.size(); i++)
+        uniqueTx.insert(vtx[i].GetHash());
     if (uniqueTx.size() != vtx.size())
         return DoS(100, error("CheckBlock() : duplicate transaction"));
+    if (fPoSTrace)
+    {
+        printf("CheckBlock: uniqueTx OK\n");
+        fflush(stdout);
+    }
 
     unsigned int nSigOps = 0;
-    BOOST_FOREACH(const CTransaction& tx, vtx)
-    {
-        nSigOps += tx.GetLegacySigOpCount();
-    }
+    for (unsigned int i = 0; i < vtx.size(); i++)
+        nSigOps += vtx[i].GetLegacySigOpCount();
     if (nSigOps > MAX_BLOCK_SIGOPS)
         return DoS(100, error("CheckBlock() : out-of-bounds SigOpCount"));
+    if (fPoSTrace)
+    {
+        printf("CheckBlock: sigops OK (%u)\n", nSigOps);
+        fflush(stdout);
+    }
 
     // Check merkle root
     if (fCheckMerkleRoot && hashMerkleRoot != BuildMerkleTree())
         return DoS(100, error("CheckBlock() : hashMerkleRoot mismatch"));
+    if (fPoSTrace)
+    {
+        printf("CheckBlock: merkle OK\n");
+        fflush(stdout);
+    }
 
+    // PosCoin: check proof-of-stake block signature (after cheaper checks)
+    if (fPoS && fCheckSig)
+    {
+        if (fPoSTrace)
+        {
+            printf("CheckBlock: CheckBlockSignature for PoS block\n");
+            fflush(stdout);
+        }
+        if (!CheckBlockSignature())
+            return DoS(100, error("CheckBlock() : bad proof-of-stake block signature"));
+        if (fPoSTrace)
+        {
+            printf("CheckBlock: CheckBlockSignature OK\n");
+            fflush(stdout);
+            // Probe allocator health after OpenSSL ECDSA + EC_KEY_free
+            void* p = malloc(256);
+            if (!p)
+                return error("CheckBlock() : malloc probe failed after CheckBlockSignature");
+            memset(p, 0xA5, 256);
+            free(p);
+            printf("CheckBlock: post-sig heap probe OK\n");
+            fflush(stdout);
+            printf("CheckBlock: complete for PoS\n");
+            fflush(stdout);
+        }
+    }
 
     return true;
 }
@@ -2446,14 +2501,47 @@ bool CBlock::CheckBlockSignature() const
     {
         if (vSolutions.empty())
             return error("CheckBlockSignature() : empty pubkey solution");
-        valtype& vchPubKey = vSolutions[0];
-        CKey key;
-        if (!key.SetPubKey(vchPubKey))
-            return error("CheckBlockSignature() : SetPubKey failed");
+        // Copy pubkey out of script solutions before touching OpenSSL
+        const CPubKey pubkey(vSolutions[0]);
         if (vchBlockSig.empty())
             return error("CheckBlockSignature() : empty block signature");
-        if (!key.Verify(GetHash(), vchBlockSig))
-            return error("CheckBlockSignature() : Verify failed");
+
+        const bool fTrace = (nBestHeight < 100);
+        if (fTrace)
+        {
+            printf("CheckBlockSignature: computing block hash (scrypt)\n");
+            fflush(stdout);
+        }
+        uint256 hashBlock = GetHash();
+
+        if (fTrace)
+        {
+            printf("CheckBlockSignature: SetPubKey + Verify (siglen=%u)\n",
+                   (unsigned)vchBlockSig.size());
+            fflush(stdout);
+        }
+
+        {
+            CKey key;
+            if (!key.SetPubKey(pubkey))
+                return error("CheckBlockSignature() : SetPubKey failed");
+            // Own a copy of the DER so OpenSSL d2i never walks block memory
+            std::vector<unsigned char> vchSig(vchBlockSig.begin(), vchBlockSig.end());
+            if (!key.Verify(hashBlock, vchSig))
+                return error("CheckBlockSignature() : Verify failed");
+            if (fTrace)
+            {
+                printf("CheckBlockSignature: Verify OK, Reset key\n");
+                fflush(stdout);
+            }
+            key.Reset();
+        }
+
+        if (fTrace)
+        {
+            printf("CheckBlockSignature: done\n");
+            fflush(stdout);
+        }
         return true;
     }
 
