@@ -40,6 +40,10 @@ static const unsigned int MAX_STANDARD_TX_SIZE = MAX_BLOCK_SIZE_GEN/5;
 static const unsigned int MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE/50;
 /** The maximum number of orphan transactions kept in memory */
 static const unsigned int MAX_ORPHAN_TRANSACTIONS = MAX_BLOCK_SIZE/100;
+/** Cap orphan blocks kept in RAM during IBD (unbounded orphans were a major memory spike) */
+static const unsigned int MAX_ORPHAN_BLOCKS = 750;
+/** Rotate to a new blk????.dat when the current file exceeds this size (was ~2 GiB) */
+static const int64_t MAX_BLOCKFILE_SIZE = 500LL * 1024LL * 1024LL; // 500 MiB
 /** The maximum number of entries in an 'inv' protocol message */
 static const unsigned int MAX_INV_SZ = 50000;
 /** Fees smaller than this (in satoshi) are considered zero fee (for transaction creation) */

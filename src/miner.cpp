@@ -553,7 +553,8 @@ void StakeMiner(CWallet *pwallet)
                 break;
             nLastCoinStakeSearchInterval = 0;
             fTryToSync = true;
-            MilliSleep(1000);
+            // Sleep longer while catching up — staking cannot run usefully in IBD
+            MilliSleep(IsInitialBlockDownload() ? 5000 : 1000);
             if (fShutdown)
                 return;
         }

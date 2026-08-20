@@ -257,6 +257,44 @@ unsigned int LimitOrphanTxSize(unsigned int nMaxOrphans)
     return nEvicted;
 }
 
+static void EraseOrphanBlock(const uint256& hash)
+{
+    map<uint256, CBlock*>::iterator it = mapOrphanBlocks.find(hash);
+    if (it == mapOrphanBlocks.end())
+        return;
+    CBlock* pblock = it->second;
+    // Remove from by-prev index (may have multiple orphans with same prev)
+    typedef multimap<uint256, CBlock*>::iterator orphan_it;
+    pair<orphan_it, orphan_it> range = mapOrphanBlocksByPrev.equal_range(pblock->hashPrevBlock);
+    for (orphan_it mi = range.first; mi != range.second; )
+    {
+        if ((*mi).second == pblock)
+            mapOrphanBlocksByPrev.erase(mi++);
+        else
+            ++mi;
+    }
+    if (pblock->IsProofOfStake())
+        setStakeSeenOrphan.erase(pblock->GetProofOfStake());
+    mapOrphanBlocks.erase(it);
+    delete pblock;
+}
+
+static unsigned int LimitOrphanBlockSize(unsigned int nMaxOrphans)
+{
+    unsigned int nMax = GetArg("-maxorphanblocks", nMaxOrphans);
+    unsigned int nEvicted = 0;
+    while (mapOrphanBlocks.size() > nMax)
+    {
+        uint256 randomhash = GetRandHash();
+        map<uint256, CBlock*>::iterator it = mapOrphanBlocks.lower_bound(randomhash);
+        if (it == mapOrphanBlocks.end())
+            it = mapOrphanBlocks.begin();
+        EraseOrphanBlock(it->first);
+        ++nEvicted;
+    }
+    return nEvicted;
+}
+
 
 
 
@@ -2428,15 +2466,22 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
         CBlock* pblock2 = new CBlock(*pblock);
         mapOrphanBlocks.insert(make_pair(hash, pblock2));
         mapOrphanBlocksByPrev.insert(make_pair(pblock2->hashPrevBlock, pblock2));
+        unsigned int nEvicted = LimitOrphanBlockSize(MAX_ORPHAN_BLOCKS);
+        if (nEvicted > 0)
+            printf("ProcessBlock: pruned %u orphan block(s), mapOrphanBlocks.size()=%"PRIszu"\n",
+                   nEvicted, mapOrphanBlocks.size());
 
         // Ask this guy to fill in what we're missing
         if (pfrom)
         {
-            pfrom->PushGetBlocks(pindexBest, GetOrphanRoot(pblock2));
+            // If we just pruned this orphan, do not ask for more of its ancestors
+            if (!mapOrphanBlocks.count(hash))
+                return true;
+            pfrom->PushGetBlocks(pindexBest, GetOrphanRoot(mapOrphanBlocks[hash]));
             // ppcoin: getblocks may not obtain the ancestor block rejected
             // earlier by duplicate-stake check so we ask for it again directly
             if (!IsInitialBlockDownload())
-                pfrom->AskFor(CInv(MSG_BLOCK, WantedByOrphan(pblock2)));
+                pfrom->AskFor(CInv(MSG_BLOCK, WantedByOrphan(mapOrphanBlocks[hash])));
         }
         return true;
     }
@@ -2673,8 +2718,15 @@ FILE* AppendBlockFile(unsigned int& nFileRet)
             return NULL;
         if (fseek(file, 0, SEEK_END) != 0)
             return NULL;
-        // FAT32 file size max 4GB, fseek and ftell max 2GB, so we must stay under 2GB
-        if (ftell(file) < (long)(0x7F000000 - MAX_SIZE))
+        // Rotate before ~MAX_BLOCKFILE_SIZE (default 500 MiB). Historical builds
+        // used ~2 GiB (FAT32/ftell limit); smaller files are easier to copy/backup.
+        long nPos = ftell(file);
+        int64_t nMaxSize = GetArg("-blockfilesize", MAX_BLOCKFILE_SIZE);
+        if (nMaxSize < 64LL * 1024LL * 1024LL)
+            nMaxSize = 64LL * 1024LL * 1024LL; // floor 64 MiB
+        if (nMaxSize > 0x7F000000LL - (int64_t)MAX_SIZE)
+            nMaxSize = 0x7F000000LL - (int64_t)MAX_SIZE; // stay under 2 GiB ftell limit
+        if (nPos >= 0 && (int64_t)nPos < nMaxSize - (int64_t)MAX_SIZE)
         {
             nFileRet = nCurrentBlockFile;
             return file;
