@@ -291,7 +291,9 @@ std::string HelpMessage()
         "  -debug                 " + _("Output extra debugging information. Implies all other -debug* options") + "\n" +
         "  -debugnet              " + _("Output extra network debugging information") + "\n" +
         "  -logtimestamps         " + _("Prepend debug output with timestamp") + "\n" +
-        "  -shrinkdebugfile       " + _("Shrink debug.log file on client startup (default: 1 when no -debug)") + "\n" +
+        "  -shrinkdebugfile       " + _("Shrink debug.log file on client startup and during sync (default: 1 when no -debug)") + "\n" +
+        "  -maxdebuglogfile=<n>   " + _("Shrink debug.log when larger than <n> bytes (default: 5242880 = 5 MiB)") + "\n" +
+        "  -shrinkdebugfilekeep=<n> " + _("Bytes of debug.log to keep after shrink (default: 524288 = 512 KiB)") + "\n" +
         "  -printtoconsole        " + _("Send trace/debug info to console instead of debug.log file") + "\n" +
 #ifdef WIN32
         "  -printtodebugger       " + _("Send trace/debug info to debugger") + "\n" +
