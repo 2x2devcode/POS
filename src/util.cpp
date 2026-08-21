@@ -1182,23 +1182,50 @@ void FileCommit(FILE *fileout)
 
 void ShrinkDebugFile()
 {
-    // Scroll debug.log if it's getting too big
+    // Truncate debug.log when it grows too large (default 5 MiB → keep last 512 KiB).
+    // Called at startup and periodically during IBD so sync does not fill the disk.
     boost::filesystem::path pathLog = GetDataDir() / "debug.log";
-    FILE* file = fopen(pathLog.string().c_str(), "r");
-    if (file && boost::filesystem::file_size(pathLog) > 10 * 1000000)
-    {
-        // Restart the file with some of the end
-        char pch[200000];
-        fseek(file, -sizeof(pch), SEEK_END);
-        int nBytes = fread(pch, 1, sizeof(pch), file);
+    try {
+        if (!boost::filesystem::exists(pathLog))
+            return;
+        const uintmax_t nMaxSize = (uintmax_t)GetArg("-maxdebuglogfile", 5 * 1024 * 1024);
+        const uintmax_t nKeepSize = (uintmax_t)GetArg("-shrinkdebugfilekeep", 512 * 1024);
+        uintmax_t nFileSize = boost::filesystem::file_size(pathLog);
+        if (nFileSize <= nMaxSize)
+            return;
+
+        FILE* file = fopen(pathLog.string().c_str(), "rb");
+        if (!file)
+            return;
+        uintmax_t nRead = nKeepSize;
+        if (nRead > nFileSize)
+            nRead = nFileSize;
+        if (fseek(file, -((long)nRead), SEEK_END) != 0)
+        {
+            fclose(file);
+            return;
+        }
+        std::vector<char> vch(nRead);
+        size_t nBytes = fread(&vch[0], 1, (size_t)nRead, file);
         fclose(file);
 
-        file = fopen(pathLog.string().c_str(), "w");
+        file = fopen(pathLog.string().c_str(), "wb");
         if (file)
         {
-            fwrite(pch, 1, nBytes, file);
+            // Prefer starting on a newline so the first line is not a fragment
+            size_t nStart = 0;
+            while (nStart < nBytes && vch[nStart] != '\n')
+                nStart++;
+            if (nStart < nBytes)
+                nStart++;
+            if (nStart < nBytes)
+                fwrite(&vch[nStart], 1, nBytes - nStart, file);
             fclose(file);
+            printf("ShrinkDebugFile: truncated debug.log from %"PRIu64" to ~%"PRIu64" bytes\n",
+                   (uint64_t)nFileSize, (uint64_t)(nBytes > nStart ? nBytes - nStart : 0));
         }
+    } catch (const std::exception& e) {
+        printf("ShrinkDebugFile: %s\n", e.what());
     }
 }
 
