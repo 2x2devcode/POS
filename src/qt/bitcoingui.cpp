@@ -26,6 +26,7 @@
 #include "guiutil.h"
 #include "rpcconsole.h"
 #include "wallet.h"
+#include "init.h"
 
 #ifdef Q_OS_MAC
 #include "macdockiconhandler.h"
@@ -189,6 +190,7 @@ BitcoinGUI::BitcoinGUI(QWidget *parent):
 
     rpcConsole = new RPCConsole(this);
     connect(openRPCConsoleAction, SIGNAL(triggered()), rpcConsole, SLOT(show()));
+    connect(rpcConsole, SIGNAL(handleRestart(QStringList)), this, SLOT(handleRestart(QStringList)));
 
     // Clicking on "Verify Message" in the address book sends you to the verify message tab
     connect(addressBookPage, SIGNAL(verifyMessage(QString)), this, SLOT(gotoVerifyMessageTab(QString)));
@@ -982,4 +984,13 @@ void BitcoinGUI::updateStakingIcon()
         else
             labelStakingIcon->setToolTip(tr("Not staking"));
     }
+}
+
+void BitcoinGUI::handleRestart(QStringList args)
+{
+    if (fRequestShutdown)
+        return;
+    restartArgs = args;
+    fRequestShutdown = true;
+    StartShutdown();
 }

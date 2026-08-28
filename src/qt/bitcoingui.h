@@ -49,6 +49,9 @@ public:
     */
     void setWalletModel(WalletModel *walletModel);
 
+    bool isRestartRequested() const { return !restartArgs.isEmpty(); }
+    QStringList getRestartArgs() const { return restartArgs; }
+
 protected:
     void changeEvent(QEvent *e);
     void closeEvent(QCloseEvent *event);
@@ -186,6 +189,11 @@ private slots:
 
     void updateWeight();
     void updateStakingIcon();
+    /** Restart the application with new command-line arguments (wallet repair). */
+    void handleRestart(QStringList args);
+
+private:
+    QStringList restartArgs;
 };
 
-#endif
+#endif // BITCOINGUI_H
