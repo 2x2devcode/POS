@@ -28,6 +28,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
 
 #if defined(BITCOIN_NEED_QT_PLUGINS) && !defined(_BITCOIN_QT_PLUGINS_INCLUDED)
 #define _BITCOIN_QT_PLUGINS_INCLUDED
@@ -339,8 +340,19 @@ int main(int argc, char *argv[])
                 window.setWalletModel(0);
                 guiref = 0;
             }
+            // Capture restart request before Shutdown; window remains in scope but
+            // keep local copies so relaunch does not depend on GUI state after teardown.
+            const bool fRestart = window.isRestartRequested();
+            const QStringList restartArgs = window.getRestartArgs();
+
             // Shutdown the core and its threads, but don't exit Bitcoin-Qt here
             Shutdown(NULL);
+
+            // Wallet-repair restart: relaunch with the requested args after a clean exit
+            if (fRestart)
+            {
+                QProcess::startDetached(QApplication::applicationFilePath(), restartArgs);
+            }
         }
         else
         {
