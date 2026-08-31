@@ -713,6 +713,8 @@ bool DisconnectNode(int nodeid);
 void Ban(const CNetAddr& addr, int64_t banTimeSeconds);
 /** Unban address; returns true if a ban entry was removed. */
 bool Unban(const CNetAddr& addr);
+/** Initiate outbound network connection (optionally one-shot to strDest). */
+bool OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant *grantOutbound = NULL, const char *strDest = NULL, bool fOneShot = false);
 
 inline void RelayInventory(const CInv& inv)
 {
