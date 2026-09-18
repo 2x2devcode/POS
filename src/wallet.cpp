@@ -1156,6 +1156,9 @@ static void ApproximateBestSubset(vector<pair<int64_t, pair<const CWalletTx*,uns
                 //the selection random.
                 if (nPass == 0 ? insecure_rand()&1 : !vfIncluded[i])
                 {
+                    // Avoid signed overflow — skip this coin in this pass
+                    if (vValue[i].first > 0 && nTotal > std::numeric_limits<int64_t>::max() - vValue[i].first)
+                        continue;
                     nTotal += vValue[i].first;
                     vfIncluded[i] = true;
                     if (nTotal >= nTargetValue)
@@ -1173,6 +1176,62 @@ static void ApproximateBestSubset(vector<pair<int64_t, pair<const CWalletTx*,uns
             }
         }
     }
+}
+
+/** Greedy largest-first selection — avoids int64 sum overflow skipping UTXOs and
+ *  ApproximateBestSubset returning every input (oversized tx / creation failure). */
+static bool SelectCoinsGreedy(const vector<COutput>& vCoins, int64_t nTargetValue, unsigned int nSpendTime,
+                              int nConfMine, int nConfTheirs,
+                              set<pair<const CWalletTx*,unsigned int> >& setCoinsRet, int64_t& nValueRet)
+{
+    vector<pair<int64_t, pair<const CWalletTx*,unsigned int> > > vSorted;
+    pair<int64_t, pair<const CWalletTx*,unsigned int> > coinLowestLarger;
+    coinLowestLarger.first = std::numeric_limits<int64_t>::max();
+    coinLowestLarger.second.first = NULL;
+
+    BOOST_FOREACH(const COutput& output, vCoins)
+    {
+        const CWalletTx *pcoin = output.tx;
+        if (output.nDepth < (pcoin->IsFromMe() ? nConfMine : nConfTheirs))
+            continue;
+        if (pcoin->nTime > nSpendTime)
+            continue;
+        int64_t n = pcoin->vout[output.i].nValue;
+        if (n <= 0)
+            continue;
+        pair<int64_t, pair<const CWalletTx*,unsigned int> > coin = make_pair(n, make_pair(pcoin, (unsigned int)output.i));
+        if (n >= nTargetValue)
+        {
+            if (n < coinLowestLarger.first)
+                coinLowestLarger = coin;
+        }
+        else
+            vSorted.push_back(coin);
+    }
+
+    // Exact or smallest single UTXO that covers the target
+    if (coinLowestLarger.second.first != NULL)
+    {
+        setCoinsRet.clear();
+        setCoinsRet.insert(coinLowestLarger.second);
+        nValueRet = coinLowestLarger.first;
+        return true;
+    }
+
+    sort(vSorted.rbegin(), vSorted.rend(), CompareValueOnly());
+
+    setCoinsRet.clear();
+    nValueRet = 0;
+    BOOST_FOREACH(const PAIRTYPE(int64_t, PAIRTYPE(const CWalletTx*, unsigned int))& coin, vSorted)
+    {
+        if (nValueRet >= nTargetValue)
+            break;
+        if (coin.first > 0 && nValueRet > std::numeric_limits<int64_t>::max() - coin.first)
+            break;
+        setCoinsRet.insert(coin.second);
+        nValueRet += coin.first;
+    }
+    return nValueRet >= nTargetValue;
 }
 
 // ppcoin: total coins staked (non-spendable until maturity)
@@ -1242,9 +1301,16 @@ bool CWallet::SelectCoinsMinConf(int64_t nTargetValue, unsigned int nSpendTime, 
         // nTargetValue + CENT overflows when target is near INT64_MAX (~92.23B coins)
         else if (nTargetValue > std::numeric_limits<int64_t>::max() - CENT || n < nTargetValue + CENT)
         {
-            // Avoid signed overflow when selecting many UTXOs
+            // Avoid signed overflow when selecting many UTXOs.
+            // Do not silently drop UTXOs that still cover the target alone.
             if (n > 0 && nTotalLower > std::numeric_limits<int64_t>::max() - n)
+            {
+                if (nTotalLower >= nTargetValue)
+                    break;
+                if (n >= nTargetValue && n < coinLowestLarger.first)
+                    coinLowestLarger = coin;
                 continue;
+            }
             vValue.push_back(coin);
             nTotalLower += n;
         }
@@ -1282,6 +1348,50 @@ bool CWallet::SelectCoinsMinConf(int64_t nTargetValue, unsigned int nSpendTime, 
     if (nTargetValue <= std::numeric_limits<int64_t>::max() - CENT &&
         nBest != nTargetValue && nTotalLower >= nTargetValue + CENT)
         ApproximateBestSubset(vValue, nTotalLower, nTargetValue + CENT, vfBest, nBest, 1000);
+
+    // Count how many inputs the stochastic solver kept. If it failed to shrink
+    // the set (still "all coins"), fall back to greedy largest-first so sends
+    // from large wallets do not build oversized transactions.
+    int nBestCount = 0;
+    for (unsigned int i = 0; i < vfBest.size(); i++)
+        if (vfBest[i])
+            nBestCount++;
+
+    bool fUseGreedy = (nBestCount > 50 || (nBest == nTotalLower && vValue.size() > 1));
+    if (fUseGreedy)
+    {
+        setCoinsRet.clear();
+        nValueRet = 0;
+        BOOST_FOREACH(const PAIRTYPE(int64_t, PAIRTYPE(const CWalletTx*, unsigned int))& coin, vValue)
+        {
+            if (nValueRet >= nTargetValue)
+                break;
+            if (coin.first > 0 && nValueRet > std::numeric_limits<int64_t>::max() - coin.first)
+                break;
+            setCoinsRet.insert(coin.second);
+            nValueRet += coin.first;
+        }
+        if (nValueRet >= nTargetValue)
+        {
+            // Prefer a single larger coin when it is closer / fewer inputs
+            if (coinLowestLarger.second.first && coinLowestLarger.first <= nValueRet)
+            {
+                setCoinsRet.clear();
+                setCoinsRet.insert(coinLowestLarger.second);
+                nValueRet = coinLowestLarger.first;
+            }
+            return true;
+        }
+        // Greedy on vValue failed (should be rare); try lowest larger
+        if (coinLowestLarger.second.first)
+        {
+            setCoinsRet.clear();
+            setCoinsRet.insert(coinLowestLarger.second);
+            nValueRet = coinLowestLarger.first;
+            return true;
+        }
+        return false;
+    }
 
     // If we have a bigger coin and (either the stochastic approximation didn't find a good solution,
     //                                   or the next bigger coin is closer), return the bigger coin
@@ -1331,9 +1441,16 @@ bool CWallet::SelectCoins(int64_t nTargetValue, unsigned int nSpendTime, set<pai
         return (nValueRet >= nTargetValue);
     }
 
-    return (SelectCoinsMinConf(nTargetValue, nSpendTime, 1, 10, vCoins, setCoinsRet, nValueRet) ||
-            SelectCoinsMinConf(nTargetValue, nSpendTime, 1, 1, vCoins, setCoinsRet, nValueRet) ||
-            SelectCoinsMinConf(nTargetValue, nSpendTime, 0, 1, vCoins, setCoinsRet, nValueRet));
+    if (SelectCoinsMinConf(nTargetValue, nSpendTime, 1, 10, vCoins, setCoinsRet, nValueRet) ||
+        SelectCoinsMinConf(nTargetValue, nSpendTime, 1, 1, vCoins, setCoinsRet, nValueRet) ||
+        SelectCoinsMinConf(nTargetValue, nSpendTime, 0, 1, vCoins, setCoinsRet, nValueRet))
+        return true;
+
+    // Large-balance wallets: int64 summation in SelectCoinsMinConf can skip UTXOs and
+    // fail even when spendable value is sufficient — try largest-first greedy selection.
+    return SelectCoinsGreedy(vCoins, nTargetValue, nSpendTime, 1, 10, setCoinsRet, nValueRet) ||
+           SelectCoinsGreedy(vCoins, nTargetValue, nSpendTime, 1, 1, setCoinsRet, nValueRet) ||
+           SelectCoinsGreedy(vCoins, nTargetValue, nSpendTime, 0, 1, setCoinsRet, nValueRet);
 }
 
 // Select some coins without random shuffle or best subset approximation
@@ -1389,7 +1506,9 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
     int64_t nValue = 0;
     BOOST_FOREACH (const PAIRTYPE(CScript, int64_t)& s, vecSend)
     {
-        if (nValue < 0)
+        if (s.second < 0)
+            return false;
+        if (s.second > 0 && nValue > std::numeric_limits<int64_t>::max() - s.second)
             return false;
         nValue += s.second;
     }
@@ -1397,6 +1516,8 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
         return false;
 
     wtxNew.BindWallet(this);
+    // Ensure spend-time filter in SelectCoins sees current time (not a stale default)
+    wtxNew.nTime = GetAdjustedTime();
 
     {
         LOCK2(cs_main, cs_wallet);
@@ -1410,6 +1531,8 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
                 wtxNew.vout.clear();
                 wtxNew.fFromMe = true;
 
+                if (nFeeRet < 0 || (nFeeRet > 0 && nValue > std::numeric_limits<int64_t>::max() - nFeeRet))
+                    return false;
                 int64_t nTotalValue = nValue + nFeeRet;
                 double dPriority = 0;
                 // vouts to the payees
