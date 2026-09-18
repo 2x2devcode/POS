@@ -80,7 +80,9 @@ CMedianFilter<int64_t> vTimeOffsets(200,0);
 bool fReopenDebugLog = false;
 
 // Init OpenSSL library multithreading support
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 static CCriticalSection** ppmutexOpenSSL;
+#endif
 void locking_callback(int mode, int i, const char* file, int line)
 {
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
