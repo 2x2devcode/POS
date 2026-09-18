@@ -250,7 +250,10 @@ public:
         int64_t nDebit = 0;
         BOOST_FOREACH(const CTxIn& txin, tx.vin)
         {
-            nDebit += GetDebit(txin);
+            int64_t n = GetDebit(txin);
+            if (n > 0 && nDebit > std::numeric_limits<int64_t>::max() - n)
+                throw std::runtime_error("CWallet::GetDebit() : value out of range");
+            nDebit += n;
             if (!MoneyRange(nDebit))
                 throw std::runtime_error("CWallet::GetDebit() : value out of range");
         }
@@ -261,7 +264,10 @@ public:
         int64_t nCredit = 0;
         BOOST_FOREACH(const CTxOut& txout, tx.vout)
         {
-            nCredit += GetCredit(txout);
+            int64_t n = GetCredit(txout);
+            if (n > 0 && nCredit > std::numeric_limits<int64_t>::max() - n)
+                throw std::runtime_error("CWallet::GetCredit() : value out of range");
+            nCredit += n;
             if (!MoneyRange(nCredit))
                 throw std::runtime_error("CWallet::GetCredit() : value out of range");
         }
@@ -619,7 +625,10 @@ public:
             if (!IsSpent(i))
             {
                 const CTxOut &txout = vout[i];
-                nCredit += pwallet->GetCredit(txout);
+                int64_t n = pwallet->GetCredit(txout);
+                if (n > 0 && nCredit > std::numeric_limits<int64_t>::max() - n)
+                    throw std::runtime_error("CWalletTx::GetAvailableCredit() : value out of range");
+                nCredit += n;
                 if (!MoneyRange(nCredit))
                     throw std::runtime_error("CWalletTx::GetAvailableCredit() : value out of range");
             }

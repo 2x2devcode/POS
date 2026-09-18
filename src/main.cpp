@@ -17,6 +17,7 @@
 #include <boost/filesystem/fstream.hpp>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 #ifdef WIN32
 #include <windows.h>
@@ -1659,7 +1660,17 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
 
     // ppcoin: track money supply and mint amount info
     pindex->nMint = nValueOut - nValueIn + nFees;
-    pindex->nMoneySupply = (pindex->pprev? pindex->pprev->nMoneySupply : 0) + nValueOut - nValueIn;
+    {
+        // Saturate money-supply tracker — signed int64 overflows near ~92.23B coins
+        int64_t nPrevSupply = pindex->pprev ? pindex->pprev->nMoneySupply : 0;
+        int64_t nDelta = nValueOut - nValueIn;
+        if (nDelta > 0 && nPrevSupply > std::numeric_limits<int64_t>::max() - nDelta)
+            pindex->nMoneySupply = std::numeric_limits<int64_t>::max();
+        else if (nDelta < 0 && nPrevSupply < std::numeric_limits<int64_t>::min() - nDelta)
+            pindex->nMoneySupply = 0;
+        else
+            pindex->nMoneySupply = nPrevSupply + nDelta;
+    }
     if (!txdb.WriteBlockIndex(CDiskBlockIndex(pindex)))
         return error("Connect() : WriteBlockIndex for pindex failed");
 

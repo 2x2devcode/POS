@@ -1,4 +1,6 @@
 #include "bitcoinunits.h"
+#include "bignum.h"
+#include "util.h"
 
 #include <QStringList>
 
@@ -112,7 +114,40 @@ QString BitcoinUnits::format(int unit, qint64 n, bool fPlus)
     return quotient_str + QString(".") + remainder_str;
 }
 
+QString BitcoinUnits::format(int unit, const CBigNum& n, bool fPlus)
+{
+    if (!valid(unit))
+        return QString();
+    // Full coin unit: use core FormatMoney which supports >int64 totals
+    if (unit == BTC)
+        return QString::fromStdString(FormatMoney(n, fPlus));
+
+    // Smaller display units: scale via CBigNum then format
+    CBigNum bnFactor(factor(unit));
+    bool fNegative = n < CBigNum(0);
+    CBigNum nAbs = fNegative ? (CBigNum(0) - n) : n;
+    CBigNum quotient = nAbs / bnFactor;
+    CBigNum remainder = nAbs % bnFactor;
+    int num_decimals = decimals(unit);
+    QString quotient_str = QString::fromStdString(quotient.ToString());
+    QString remainder_str = QString::number(ClampMoneyToInt64(remainder)).rightJustified(num_decimals, '0');
+    int nTrim = 0;
+    for (int i = remainder_str.size()-1; i>=2 && (remainder_str.at(i) == '0'); --i)
+        ++nTrim;
+    remainder_str.chop(nTrim);
+    if (fNegative)
+        quotient_str.insert(0, '-');
+    else if (fPlus && n > CBigNum(0))
+        quotient_str.insert(0, '+');
+    return quotient_str + QString(".") + remainder_str;
+}
+
 QString BitcoinUnits::formatWithUnit(int unit, qint64 amount, bool plussign)
+{
+    return format(unit, amount, plussign) + QString(" ") + name(unit);
+}
+
+QString BitcoinUnits::formatWithUnit(int unit, const CBigNum& amount, bool plussign)
 {
     return format(unit, amount, plussign) + QString(" ") + name(unit);
 }

@@ -3,12 +3,14 @@
 #include "optionsmodel.h"
 #include "addresstablemodel.h"
 #include "transactiontablemodel.h"
+#include "bitcoinunits.h"
 
 #include "ui_interface.h"
 #include "wallet.h"
 #include "walletdb.h" // for BackupWallet
 #include "base58.h"
 #include "boost_compat.h"
+#include "util.h"
 
 #include <QSet>
 #include <QTimer>
@@ -39,22 +41,49 @@ WalletModel::~WalletModel()
 
 qint64 WalletModel::getBalance() const
 {
-    return wallet->GetBalance().getuint64();
+    return ClampMoneyToInt64(wallet->GetBalance());
 }
 
 qint64 WalletModel::getUnconfirmedBalance() const
 {
-    return wallet->GetUnconfirmedBalance().getuint64();
+    return ClampMoneyToInt64(wallet->GetUnconfirmedBalance());
 }
 
 qint64 WalletModel::getStake() const
 {
-    return wallet->GetStake().getuint64();
+    return ClampMoneyToInt64(wallet->GetStake());
 }
 
 qint64 WalletModel::getImmatureBalance() const
 {
-    return wallet->GetImmatureBalance().getuint64();
+    return ClampMoneyToInt64(wallet->GetImmatureBalance());
+}
+
+QString WalletModel::formatBalance() const
+{
+    return BitcoinUnits::formatWithUnit(getOptionsModel()->getDisplayUnit(), wallet->GetBalance());
+}
+
+QString WalletModel::formatStake() const
+{
+    return BitcoinUnits::formatWithUnit(getOptionsModel()->getDisplayUnit(), wallet->GetStake());
+}
+
+QString WalletModel::formatUnconfirmedBalance() const
+{
+    return BitcoinUnits::formatWithUnit(getOptionsModel()->getDisplayUnit(), wallet->GetUnconfirmedBalance());
+}
+
+QString WalletModel::formatImmatureBalance() const
+{
+    return BitcoinUnits::formatWithUnit(getOptionsModel()->getDisplayUnit(), wallet->GetImmatureBalance());
+}
+
+QString WalletModel::formatTotalBalance() const
+{
+    CBigNum total = wallet->GetBalance() + wallet->GetStake()
+                  + wallet->GetUnconfirmedBalance() + wallet->GetImmatureBalance();
+    return BitcoinUnits::formatWithUnit(getOptionsModel()->getDisplayUnit(), total);
 }
 
 int WalletModel::getNumTransactions() const
@@ -104,13 +133,24 @@ void WalletModel::checkBalanceChanged()
     qint64 newStake = getStake();
     qint64 newUnconfirmedBalance = getUnconfirmedBalance();
     qint64 newImmatureBalance = getImmatureBalance();
+    // Also compare string forms so balances above INT64_MAX still refresh the UI
+    QString newBalanceStr = formatBalance();
+    QString newStakeStr = formatStake();
+    QString newUnconfirmedStr = formatUnconfirmedBalance();
+    QString newImmatureStr = formatImmatureBalance();
 
-    if(cachedBalance != newBalance || cachedStake != newStake || cachedUnconfirmedBalance != newUnconfirmedBalance || cachedImmatureBalance != newImmatureBalance)
+    if(cachedBalance != newBalance || cachedStake != newStake || cachedUnconfirmedBalance != newUnconfirmedBalance || cachedImmatureBalance != newImmatureBalance
+       || cachedBalanceStr != newBalanceStr || cachedStakeStr != newStakeStr
+       || cachedUnconfirmedStr != newUnconfirmedStr || cachedImmatureStr != newImmatureStr)
     {
         cachedBalance = newBalance;
         cachedStake = newStake;
         cachedUnconfirmedBalance = newUnconfirmedBalance;
         cachedImmatureBalance = newImmatureBalance;
+        cachedBalanceStr = newBalanceStr;
+        cachedStakeStr = newStakeStr;
+        cachedUnconfirmedStr = newUnconfirmedStr;
+        cachedImmatureStr = newImmatureStr;
         emit balanceChanged(newBalance, newStake, newUnconfirmedBalance, newImmatureBalance);
     }
 }
@@ -175,19 +215,19 @@ WalletModel::SendCoinsReturn WalletModel::sendCoins(const QList<SendCoinsRecipie
         return DuplicateAddress;
     }
 
-    int64_t nBalance = 0;
+    CBigNum bnBalance(0);
     std::vector<COutput> vCoins;
     wallet->AvailableCoins(vCoins, true, coinControl);
 
     BOOST_FOREACH(const COutput& out, vCoins)
-        nBalance += out.tx->vout[out.i].nValue;
+        bnBalance += out.tx->vout[out.i].nValue;
 
-    if(total > nBalance)
+    if(CBigNum(total) > bnBalance)
     {
         return AmountExceedsBalance;
     }
 
-    if((total + nTransactionFee) > nBalance)
+    if(CBigNum(total) + CBigNum(nTransactionFee) > bnBalance)
     {
         return SendCoinsReturn(AmountWithFeeExceedsBalance, nTransactionFee);
     }
@@ -211,7 +251,7 @@ WalletModel::SendCoinsReturn WalletModel::sendCoins(const QList<SendCoinsRecipie
 
         if(!fCreated)
         {
-            if((total + nFeeRequired) > nBalance) // FIXME: could cause collisions in the future
+            if(CBigNum(total) + CBigNum(nFeeRequired) > bnBalance)
             {
                 return SendCoinsReturn(AmountWithFeeExceedsBalance, nFeeRequired);
             }

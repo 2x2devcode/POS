@@ -67,6 +67,12 @@ public:
     qint64 getStake() const;
     qint64 getUnconfirmedBalance() const;
     qint64 getImmatureBalance() const;
+    /** Full-precision display strings (safe above ~92.23 billion coins). */
+    QString formatBalance() const;
+    QString formatStake() const;
+    QString formatUnconfirmedBalance() const;
+    QString formatImmatureBalance() const;
+    QString formatTotalBalance() const;
     int getNumTransactions() const;
     EncryptionStatus getEncryptionStatus() const;
 
@@ -141,6 +147,10 @@ private:
     qint64 cachedStake;
     qint64 cachedUnconfirmedBalance;
     qint64 cachedImmatureBalance;
+    QString cachedBalanceStr;
+    QString cachedStakeStr;
+    QString cachedUnconfirmedStr;
+    QString cachedImmatureStr;
     qint64 cachedNumTransactions;
     EncryptionStatus cachedEncryptionStatus;
     int cachedNumBlocks;

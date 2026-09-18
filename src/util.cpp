@@ -8,7 +8,9 @@
 #include "strlcpy.h"
 #include "version.h"
 #include "ui_interface.h"
+#include "bignum.h"
 #include <boost/algorithm/string/join.hpp>
+#include <limits>
 
 // Work around clang compilation problem in Boost 1.46:
 // /usr/include/boost/program_options/detail/config_file.hpp:163:17: error: call to function 'to_internal' that is neither visible in the template definition nor found by argument-dependent lookup
@@ -392,6 +394,38 @@ string FormatMoney(int64_t n, bool fPlus)
     return str;
 }
 
+int64_t ClampMoneyToInt64(const CBigNum& n)
+{
+    static const CBigNum bnMax((uint64_t)std::numeric_limits<int64_t>::max());
+    if (n <= CBigNum(0))
+        return 0;
+    if (n > bnMax)
+        return std::numeric_limits<int64_t>::max();
+    return (int64_t)n.getuint64();
+}
+
+string FormatMoney(const CBigNum& n, bool fPlus)
+{
+    bool fNegative = n < CBigNum(0);
+    CBigNum nAbs = fNegative ? (CBigNum(0) - n) : n;
+    CBigNum bnCoin(COIN);
+    CBigNum quotient = nAbs / bnCoin;
+    CBigNum remainder = nAbs % bnCoin;
+    string str = quotient.ToString() + strprintf(".%08"PRId64, ClampMoneyToInt64(remainder));
+
+    int nTrim = 0;
+    for (int i = str.size()-1; (str[i] == '0' && isdigit(str[i-2])); --i)
+        ++nTrim;
+    if (nTrim)
+        str.erase(str.size()-nTrim, nTrim);
+
+    if (fNegative)
+        str.insert((unsigned int)0, 1, '-');
+    else if (fPlus && n > CBigNum(0))
+        str.insert((unsigned int)0, 1, '+');
+    return str;
+}
+
 
 bool ParseMoney(const string& str, int64_t& nRet)
 {
@@ -427,11 +461,14 @@ bool ParseMoney(const char* pszIn, int64_t& nRet)
     for (; *p; p++)
         if (!isspace(*p))
             return false;
-    if (strWhole.size() > 10) // guard against 63 bit overflow
+    if (strWhole.size() > 19) // guard against 63-bit overflow (max ~92233720368 coins)
         return false;
     if (nUnits < 0 || nUnits > COIN)
         return false;
     int64_t nWhole = atoi64(strWhole);
+    // Reject whole amounts that would overflow when scaled by COIN
+    if (nWhole < 0 || nWhole > (std::numeric_limits<int64_t>::max() / COIN))
+        return false;
     int64_t nValue = nWhole*COIN + nUnits;
 
     nRet = nValue;

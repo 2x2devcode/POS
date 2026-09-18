@@ -130,16 +130,20 @@ OverviewPage::~OverviewPage()
 
 void OverviewPage::setBalance(qint64 balance, qint64 stake, qint64 unconfirmedBalance, qint64 immatureBalance)
 {
-    int unit = model->getOptionsModel()->getDisplayUnit();
+    if (!model || !model->getOptionsModel())
+        return;
+
     currentBalance = balance;
     currentStake = stake;
     currentUnconfirmedBalance = unconfirmedBalance;
     currentImmatureBalance = immatureBalance;
-    ui->labelBalance->setText(BitcoinUnits::formatWithUnit(unit, balance));
-    ui->labelStake->setText(BitcoinUnits::formatWithUnit(unit, stake));
-    ui->labelUnconfirmed->setText(BitcoinUnits::formatWithUnit(unit, unconfirmedBalance));
-    ui->labelImmature->setText(BitcoinUnits::formatWithUnit(unit, immatureBalance));
-    ui->labelTotal->setText(BitcoinUnits::formatWithUnit(unit, balance + stake + unconfirmedBalance + immatureBalance));
+
+    // Format from CBigNum so totals above ~92.23B coins do not wrap to negative
+    ui->labelBalance->setText(model->formatBalance());
+    ui->labelStake->setText(model->formatStake());
+    ui->labelUnconfirmed->setText(model->formatUnconfirmedBalance());
+    ui->labelImmature->setText(model->formatImmatureBalance());
+    ui->labelTotal->setText(model->formatTotalBalance());
 
     // only show immature (newly mined) balance if it's non-zero, so as not to complicate things
     // for the non-mining users

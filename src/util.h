@@ -196,6 +196,10 @@ void PrintException(std::exception* pex, const char* pszThread);
 void PrintExceptionContinue(std::exception* pex, const char* pszThread);
 void ParseString(const std::string& str, char c, std::vector<std::string>& v);
 std::string FormatMoney(int64_t n, bool fPlus=false);
+class CBigNum;
+std::string FormatMoney(const CBigNum& n, bool fPlus=false);
+/** Convert CBigNum satoshis to int64_t without signed wrap (caps at INT64_MAX). */
+int64_t ClampMoneyToInt64(const CBigNum& n);
 bool ParseMoney(const std::string& str, int64_t& nRet);
 bool ParseMoney(const char* pszIn, int64_t& nRet);
 std::vector<unsigned char> ParseHex(const char* psz);

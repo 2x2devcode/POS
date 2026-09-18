@@ -12,6 +12,7 @@
 #include "kernel.h"
 #include "coincontrol.h"
 #include <boost/algorithm/string/replace.hpp>
+#include <limits>
 
 using namespace std;
 
@@ -1240,6 +1241,9 @@ bool CWallet::SelectCoinsMinConf(int64_t nTargetValue, unsigned int nSpendTime, 
         }
         else if (n < nTargetValue + CENT)
         {
+            // Avoid signed overflow when selecting many UTXOs
+            if (n > 0 && nTotalLower > std::numeric_limits<int64_t>::max() - n)
+                continue;
             vValue.push_back(coin);
             nTotalLower += n;
         }
@@ -1360,6 +1364,13 @@ bool CWallet::SelectCoinsForStaking(int64_t nTargetValue, unsigned int nSpendTim
         }
         else if (n < nTargetValue + CENT)
         {
+            // Avoid signed overflow when wallet holds more than ~92B coins
+            if (n > 0 && nValueRet > std::numeric_limits<int64_t>::max() - n)
+            {
+                setCoinsRet.insert(coin.second);
+                nValueRet = std::numeric_limits<int64_t>::max();
+                break;
+            }
             setCoinsRet.insert(coin.second);
             nValueRet += coin.first;
         }
@@ -1504,18 +1515,19 @@ bool CWallet::CreateTransaction(CScript scriptPubKey, int64_t nValue, CWalletTx&
 // NovaCoin: get current stake weight
 bool CWallet::GetStakeWeight(const CKeyStore& keystore, uint64_t& nMinWeight, uint64_t& nMaxWeight, uint64_t& nWeight)
 {
-    // Choose coins to use
-    int64_t nBalance = GetBalance().getuint64();
-
-    if (nBalance <= nReserveBalance)
+    // Choose coins to use — never cast full balance through int64 (wraps ~92.23B coins)
+    CBigNum bnBalance = GetBalance();
+    if (bnBalance <= CBigNum(nReserveBalance))
         return false;
+
+    int64_t nBalance = ClampMoneyToInt64(bnBalance - CBigNum(nReserveBalance));
 
     vector<const CWalletTx*> vwtxPrev;
 
     set<pair<const CWalletTx*, unsigned int> > setCoins;
     int64_t nValueIn = 0;
 
-    if (!SelectCoinsForStaking(nBalance - nReserveBalance, GetTime(), setCoins, nValueIn))
+    if (!SelectCoinsForStaking(nBalance, GetTime(), setCoins, nValueIn))
         return false;
 
     if (setCoins.empty())
@@ -1572,11 +1584,12 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
     scriptEmpty.clear();
     txNew.vout.push_back(CTxOut(0, scriptEmpty));
 
-    // Choose coins to use
-    int64_t nBalance = GetBalance().getuint64();
-
-    if (nBalance <= nReserveBalance)
+    // Choose coins to use — never cast full balance through int64 (wraps ~92.23B coins)
+    CBigNum bnBalance = GetBalance();
+    if (bnBalance <= CBigNum(nReserveBalance))
         return false;
+
+    int64_t nBalance = ClampMoneyToInt64(bnBalance - CBigNum(nReserveBalance));
 
     vector<const CWalletTx*> vwtxPrev;
 
@@ -1584,7 +1597,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
     int64_t nValueIn = 0;
 
     // Select coins with suitable depth
-    if (!SelectCoinsForStaking(nBalance - nReserveBalance, txNew.nTime, setCoins, nValueIn))
+    if (!SelectCoinsForStaking(nBalance, txNew.nTime, setCoins, nValueIn))
         return false;
 
     if (setCoins.empty())
@@ -1677,7 +1690,12 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
 
                 txNew.nTime -= n;
                 txNew.vin.push_back(CTxIn(pcoin.first->GetHash(), pcoin.second));
-                nCredit += pcoin.first->vout[pcoin.second].nValue;
+                {
+                    int64_t nAdd = pcoin.first->vout[pcoin.second].nValue;
+                    if (nAdd > 0 && nCredit > std::numeric_limits<int64_t>::max() - nAdd)
+                        return false;
+                    nCredit += nAdd;
+                }
                 vwtxPrev.push_back(pcoin.first);
                 txNew.vout.push_back(CTxOut(0, scriptPubKeyOut));
 
@@ -1721,6 +1739,12 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
             // Do not add input that is still too young
             if (nTimeWeight < nStakeMinAge)
                 continue;
+            // Avoid signed overflow when combining large UTXOs
+            {
+                int64_t nAdd = pcoin.first->vout[pcoin.second].nValue;
+                if (nAdd > 0 && nCredit > std::numeric_limits<int64_t>::max() - nAdd)
+                    break;
+            }
 
             txNew.vin.push_back(CTxIn(pcoin.first->GetHash(), pcoin.second));
             nCredit += pcoin.first->vout[pcoin.second].nValue;
@@ -1739,6 +1763,8 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
         if (nReward <= 0)
             return false;
 
+        if (nReward > 0 && nCredit > std::numeric_limits<int64_t>::max() - nReward)
+            return error("CreateCoinStake : stake output would overflow int64");
         nCredit += nReward;
     }
 
@@ -1841,7 +1867,7 @@ string CWallet::SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNe
     if (!CreateTransaction(scriptPubKey, nValue, wtxNew, reservekey, nFeeRequired))
     {
         string strError;
-        if (nValue + nFeeRequired > GetBalance())
+        if (CBigNum(nValue) + CBigNum(nFeeRequired) > GetBalance())
             strError = strprintf(_("Error: This transaction requires a transaction fee of at least %s because of its amount, complexity, or use of recently received funds  "), FormatMoney(nFeeRequired).c_str());
         else
             strError = _("Error: Transaction creation failed  ");
@@ -1865,7 +1891,7 @@ string CWallet::SendMoneyToDestination(const CTxDestination& address, int64_t nV
     // Check amount
     if (nValue <= 0)
         return _("Invalid amount");
-    if (nValue + nTransactionFee > GetBalance())
+    if (CBigNum(nValue) + CBigNum(nTransactionFee) > GetBalance())
         return _("Insufficient funds");
 
     // Parse Bitcoin address
