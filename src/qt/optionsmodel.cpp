@@ -238,7 +238,7 @@ bool OptionsModel::getMinimizeOnClose()
     return fMinimizeOnClose;
 }
 
-int OptionsModel::getDisplayUnit()
+int OptionsModel::getDisplayUnit() const
 {
     return nDisplayUnit;
 }

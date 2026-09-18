@@ -290,7 +290,7 @@ WalletModel::SendCoinsReturn WalletModel::sendCoins(const QList<SendCoinsRecipie
     return SendCoinsReturn(OK, 0, hex);
 }
 
-OptionsModel *WalletModel::getOptionsModel()
+OptionsModel *WalletModel::getOptionsModel() const
 {
     return optionsModel;
 }

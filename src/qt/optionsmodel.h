@@ -45,7 +45,7 @@ public:
     qint64 getReserveBalance();
     bool getMinimizeToTray();
     bool getMinimizeOnClose();
-    int getDisplayUnit();
+    int getDisplayUnit() const;
     bool getDisplayAddresses();
     bool getCoinControlFeatures();
     QString getLanguage() { return language; }

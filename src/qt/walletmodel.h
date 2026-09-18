@@ -59,7 +59,7 @@ public:
         Unlocked      // wallet->IsCrypted() && !wallet->IsLocked()
     };
 
-    OptionsModel *getOptionsModel();
+    OptionsModel *getOptionsModel() const;
     AddressTableModel *getAddressTableModel();
     TransactionTableModel *getTransactionTableModel();
 
