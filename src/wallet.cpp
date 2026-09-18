@@ -1433,9 +1433,14 @@ bool CWallet::SelectCoins(int64_t nTargetValue, unsigned int nSpendTime, set<pai
     // coin control -> return all selected outputs (we want all selected to go into the transaction for sure)
     if (coinControl && coinControl->HasSelected())
     {
+        nValueRet = 0;
+        setCoinsRet.clear();
         BOOST_FOREACH(const COutput& out, vCoins)
         {
-            nValueRet += out.tx->vout[out.i].nValue;
+            int64_t n = out.tx->vout[out.i].nValue;
+            if (n > 0 && nValueRet > std::numeric_limits<int64_t>::max() - n)
+                return false;
+            nValueRet += n;
             setCoinsRet.insert(make_pair(out.tx, out.i));
         }
         return (nValueRet >= nTargetValue);
@@ -1999,6 +2004,8 @@ string CWallet::SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNe
         string strError;
         if (CBigNum(nValue) + CBigNum(nFeeRequired) > GetBalance())
             strError = strprintf(_("Error: This transaction requires a transaction fee of at least %s because of its amount, complexity, or use of recently received funds  "), FormatMoney(nFeeRequired).c_str());
+        else if (nValue > std::numeric_limits<int64_t>::max() / 2)
+            strError = _("Error: Transaction creation failed — amount is too large to fund with available UTXOs in a single transaction. Try sending a smaller amount.");
         else
             strError = _("Error: Transaction creation failed  ");
         printf("SendMoney() : %s", strError.c_str());
