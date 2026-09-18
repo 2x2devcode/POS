@@ -1239,7 +1239,8 @@ bool CWallet::SelectCoinsMinConf(int64_t nTargetValue, unsigned int nSpendTime, 
             nValueRet += coin.first;
             return true;
         }
-        else if (n < nTargetValue + CENT)
+        // nTargetValue + CENT overflows when target is near INT64_MAX (~92.23B coins)
+        else if (nTargetValue > std::numeric_limits<int64_t>::max() - CENT || n < nTargetValue + CENT)
         {
             // Avoid signed overflow when selecting many UTXOs
             if (n > 0 && nTotalLower > std::numeric_limits<int64_t>::max() - n)
@@ -1278,13 +1279,16 @@ bool CWallet::SelectCoinsMinConf(int64_t nTargetValue, unsigned int nSpendTime, 
     int64_t nBest = 0;
 
     ApproximateBestSubset(vValue, nTotalLower, nTargetValue, vfBest, nBest, 1000);
-    if (nBest != nTargetValue && nTotalLower >= nTargetValue + CENT)
+    if (nTargetValue <= std::numeric_limits<int64_t>::max() - CENT &&
+        nBest != nTargetValue && nTotalLower >= nTargetValue + CENT)
         ApproximateBestSubset(vValue, nTotalLower, nTargetValue + CENT, vfBest, nBest, 1000);
 
     // If we have a bigger coin and (either the stochastic approximation didn't find a good solution,
     //                                   or the next bigger coin is closer), return the bigger coin
     if (coinLowestLarger.second.first &&
-        ((nBest != nTargetValue && nBest < nTargetValue + CENT) || coinLowestLarger.first <= nBest))
+        ((nBest != nTargetValue &&
+          (nTargetValue > std::numeric_limits<int64_t>::max() - CENT || nBest < nTargetValue + CENT))
+         || coinLowestLarger.first <= nBest))
     {
         setCoinsRet.insert(coinLowestLarger.second);
         nValueRet += coinLowestLarger.first;
@@ -1362,7 +1366,8 @@ bool CWallet::SelectCoinsForStaking(int64_t nTargetValue, unsigned int nSpendTim
             nValueRet += coin.first;
             break;
         }
-        else if (n < nTargetValue + CENT)
+        // nTargetValue + CENT overflows near INT64_MAX — include all eligible coins then
+        else if (nTargetValue > std::numeric_limits<int64_t>::max() - CENT || n < nTargetValue + CENT)
         {
             // Avoid signed overflow when wallet holds more than ~92B coins
             if (n > 0 && nValueRet > std::numeric_limits<int64_t>::max() - n)
@@ -1515,11 +1520,14 @@ bool CWallet::CreateTransaction(CScript scriptPubKey, int64_t nValue, CWalletTx&
 // NovaCoin: get current stake weight
 bool CWallet::GetStakeWeight(const CKeyStore& keystore, uint64_t& nMinWeight, uint64_t& nMaxWeight, uint64_t& nWeight)
 {
+    nMinWeight = nMaxWeight = nWeight = 0;
+
     // Choose coins to use — never cast full balance through int64 (wraps ~92.23B coins)
     CBigNum bnBalance = GetBalance();
     if (bnBalance <= CBigNum(nReserveBalance))
         return false;
 
+    // Already net of reserve — do not subtract nReserveBalance again below
     int64_t nBalance = ClampMoneyToInt64(bnBalance - CBigNum(nReserveBalance));
 
     vector<const CWalletTx*> vwtxPrev;
@@ -1532,8 +1540,6 @@ bool CWallet::GetStakeWeight(const CKeyStore& keystore, uint64_t& nMinWeight, ui
 
     if (setCoins.empty())
         return false;
-
-    nMinWeight = nMaxWeight = nWeight = 0;
 
     CTxDB txdb("r");
     BOOST_FOREACH(PAIRTYPE(const CWalletTx*, unsigned int) pcoin, setCoins)
@@ -1589,6 +1595,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
     if (bnBalance <= CBigNum(nReserveBalance))
         return false;
 
+    // Already net of reserve — callers below must not subtract nReserveBalance again
     int64_t nBalance = ClampMoneyToInt64(bnBalance - CBigNum(nReserveBalance));
 
     vector<const CWalletTx*> vwtxPrev;
@@ -1712,7 +1719,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
             break; // if kernel is found stop searching
     }
 
-    if (nCredit == 0 || nCredit > nBalance - nReserveBalance)
+    if (nCredit == 0 || nCredit > nBalance)
         return false;
 
     BOOST_FOREACH(PAIRTYPE(const CWalletTx*, unsigned int) pcoin, setCoins)
@@ -1730,8 +1737,8 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
             // Stop adding more inputs if value is already pretty significant
             if (nCredit >= nStakeCombineThreshold)
                 break;
-            // Stop adding inputs if reached reserve limit
-            if (nCredit + pcoin.first->vout[pcoin.second].nValue > nBalance - nReserveBalance)
+            // Stop adding inputs if reached reserve limit (nBalance is already net of reserve)
+            if (nCredit + pcoin.first->vout[pcoin.second].nValue > nBalance)
                 break;
             // Do not add additional significant input
             if (pcoin.first->vout[pcoin.second].nValue >= nStakeCombineThreshold)
