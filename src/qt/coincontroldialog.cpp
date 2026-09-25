@@ -7,6 +7,8 @@
 #include "addresstablemodel.h"
 #include "optionsmodel.h"
 #include "coincontrol.h"
+#include "bignum.h"
+#include "util.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -434,7 +436,7 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
     }
 
     QString sPriorityLabel      = "";
-    int64_t nAmount             = 0;
+    CBigNum bnAmount(0);
     int64_t nPayFee             = 0;
     int64_t nAfterFee           = 0;
     int64_t nChange             = 0;
@@ -454,8 +456,8 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
         // Quantity
         nQuantity++;
             
-        // Amount
-        nAmount += out.tx->vout[out.i].nValue;
+        // Amount (CBigNum — sum of many large UTXOs exceeds int64 ~92B coins)
+        bnAmount += out.tx->vout[out.i].nValue;
         
         // Priority
         dPriorityInputs += (double)out.tx->vout[out.i].nValue * (out.nDepth+1);
@@ -492,9 +494,17 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
         
         nPayFee = max(nFee, nMinFee);
         
+        CBigNum bnPayFee(nPayFee);
+        CBigNum bnPayAmount(nPayAmount);
+        CBigNum bnChange(0);
         if (nPayAmount > 0)
         {
-            nChange = nAmount - nPayFee - nPayAmount;
+            if (bnAmount > bnPayFee + bnPayAmount)
+                bnChange = bnAmount - bnPayFee - bnPayAmount;
+            else
+                bnChange = CBigNum(0);
+
+            nChange = ClampMoneyToInt64(bnChange);
             
             // if sub-cent change is required, the fee must be raised to at least CTransaction::nMinTxFee   
             if (nPayFee < CENT && nChange > 0 && nChange < CENT)
@@ -503,11 +513,13 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
                 {
                     nPayFee = nChange;
                     nChange = 0;
+                    bnChange = CBigNum(0);
                 }
                 else
                 {
                     nChange = nChange + nPayFee - CENT;
                     nPayFee = CENT;
+                    bnChange = CBigNum(nChange);
                 }  
             }
             
@@ -516,9 +528,8 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
         }
         
         // after fee
-        nAfterFee = nAmount - nPayFee;
-        if (nAfterFee < 0)
-            nAfterFee = 0;
+        CBigNum bnAfterFee = (bnAmount > CBigNum(nPayFee)) ? (bnAmount - CBigNum(nPayFee)) : CBigNum(0);
+        nAfterFee = ClampMoneyToInt64(bnAfterFee);
     }
     
     // actually update labels
@@ -541,9 +552,9 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog* dialog)
     dialog->findChild<QLabel *>("labelCoinControlChangeText")   ->setEnabled(nPayAmount > 0);
     dialog->findChild<QLabel *>("labelCoinControlChange")       ->setEnabled(nPayAmount > 0);
     
-    // stats
+    // stats — format amounts via CBigNum so totals above ~92B coins do not wrap negative
     l1->setText(QString::number(nQuantity));                                 // Quantity        
-    l2->setText(BitcoinUnits::formatWithUnit(nDisplayUnit, nAmount));        // Amount
+    l2->setText(BitcoinUnits::formatWithUnit(nDisplayUnit, bnAmount));       // Amount
     l3->setText(BitcoinUnits::formatWithUnit(nDisplayUnit, nPayFee));        // Fee
     l4->setText(BitcoinUnits::formatWithUnit(nDisplayUnit, nAfterFee));      // After Fee
     l5->setText(((nBytes > 0) ? "~" : "") + QString::number(nBytes));                                    // Bytes
@@ -618,14 +629,14 @@ void CoinControlDialog::updateView()
             itemWalletAddress->setText(COLUMN_ADDRESS, sWalletAddress);
         }
 
-        int64_t nSum = 0;
+        CBigNum bnSum(0);
         double dPrioritySum = 0;
         int nChildren = 0;
         int nInputSum = 0;
         BOOST_FOREACH(const COutput& out, coins.second)
         {
             int nInputSize = 148; // 180 if uncompressed public key
-            nSum += out.tx->vout[out.i].nValue;
+            bnSum += out.tx->vout[out.i].nValue;
             nChildren++;
             
             QTreeWidgetItem *itemOutput;
@@ -717,8 +728,8 @@ void CoinControlDialog::updateView()
         {
             dPrioritySum = dPrioritySum / (nInputSum + 78);
             itemWalletAddress->setText(COLUMN_CHECKBOX, "(" + QString::number(nChildren) + ")");
-            itemWalletAddress->setText(COLUMN_AMOUNT, BitcoinUnits::format(nDisplayUnit, nSum));
-            itemWalletAddress->setText(COLUMN_AMOUNT_INT64, strPad(QString::number(nSum), 15, " "));
+            itemWalletAddress->setText(COLUMN_AMOUNT, BitcoinUnits::format(nDisplayUnit, bnSum));
+            itemWalletAddress->setText(COLUMN_AMOUNT_INT64, strPad(QString::number(ClampMoneyToInt64(bnSum)), 15, " "));
             itemWalletAddress->setText(COLUMN_PRIORITY, CoinControlDialog::getPriorityLabel(dPrioritySum));
             itemWalletAddress->setText(COLUMN_PRIORITY_INT64, strPad(QString::number((int64_t)dPrioritySum), 20, " "));
         }

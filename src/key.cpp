@@ -373,10 +373,21 @@ bool CKey::Sign(uint256 hash, std::vector<unsigned char>& vchSig)
     const BIGNUM *sig_s = NULL;
     ECDSA_SIG_get_r_s(sig, &sig_r, &sig_s);
     if (BN_cmp(sig_s, halforder) > 0) {
-        // enforce low S values, by negating the value (modulo the order) if above order/2.
+        // Enforce low-S (BIP62/BIP66). OpenSSL 3 often produces high-S; without
+        // this step script validation rejects with "S value is unnecessarily high".
         BIGNUM *low_s = BN_dup(sig_s);
-        BN_sub(low_s, order, low_s);
-        ECDSA_SIG_set_r_s(sig, NULL, low_s);
+        BIGNUM *r_keep = BN_dup(sig_r);
+        if (!low_s || !r_keep || !BN_sub(low_s, order, low_s) ||
+            !ECDSA_SIG_set_r_s(sig, r_keep, low_s))
+        {
+            if (low_s) BN_free(low_s);
+            if (r_keep) BN_free(r_keep);
+            ECDSA_SIG_free(sig);
+            BN_CTX_end(ctx);
+            BN_CTX_free(ctx);
+            return false;
+        }
+        // r_keep and low_s are now owned by sig
     }
     BN_CTX_end(ctx);
     BN_CTX_free(ctx);

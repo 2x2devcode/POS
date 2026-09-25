@@ -41,7 +41,18 @@ static inline int ECDSA_SIG_set_r_s(ECDSA_SIG *sig, BIGNUM *r, BIGNUM *s)
     }
     return 1;
 #else
-    return ECDSA_SIG_set0(sig, r, s);
+    // OpenSSL 1.1+/3 ECDSA_SIG_set0() requires BOTH r and s non-NULL.
+    // Callers historically passed NULL to keep the existing component — emulate that.
+    const BIGNUM *cur_r = NULL, *cur_s = NULL;
+    ECDSA_SIG_get0(sig, &cur_r, &cur_s);
+    BIGNUM *new_r = r ? r : (cur_r ? BN_dup(cur_r) : NULL);
+    BIGNUM *new_s = s ? s : (cur_s ? BN_dup(cur_s) : NULL);
+    if (!new_r || !new_s) {
+        if (!r && new_r) BN_free(new_r);
+        if (!s && new_s) BN_free(new_s);
+        return 0;
+    }
+    return ECDSA_SIG_set0(sig, new_r, new_s);
 #endif
 }
 
