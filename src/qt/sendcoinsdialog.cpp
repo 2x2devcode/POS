@@ -206,7 +206,7 @@ void SendCoinsDialog::on_sendButton_clicked()
         break;
     case WalletModel::TransactionCreationFailed:
         QMessageBox::warning(this, tr("Send Coins"),
-            tr("Error: Transaction creation failed."),
+            tr("Error: Transaction creation failed. Unlock the wallet (not staking-only), run keypoolrefill if needed, and try a smaller amount if you have many small UTXOs."),
             QMessageBox::Ok, QMessageBox::Ok);
         break;
     case WalletModel::TransactionCommitFailed:

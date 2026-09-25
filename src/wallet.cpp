@@ -1179,11 +1179,15 @@ static void ApproximateBestSubset(vector<pair<int64_t, pair<const CWalletTx*,uns
 }
 
 /** Greedy largest-first selection — avoids int64 sum overflow skipping UTXOs and
- *  ApproximateBestSubset returning every input (oversized tx / creation failure). */
+ *  ApproximateBestSubset returning every input (oversized tx / creation failure).
+ *  nMaxInputs caps vin count so CreateTransaction stays under MAX_STANDARD_TX_SIZE.
+ *  nSpendTime is not used to drop coins here; caller must set tx.nTime >= max input nTime. */
 static bool SelectCoinsGreedy(const vector<COutput>& vCoins, int64_t nTargetValue, unsigned int nSpendTime,
                               int nConfMine, int nConfTheirs,
-                              set<pair<const CWalletTx*,unsigned int> >& setCoinsRet, int64_t& nValueRet)
+                              set<pair<const CWalletTx*,unsigned int> >& setCoinsRet, int64_t& nValueRet,
+                              unsigned int nMaxInputs = 200)
 {
+    (void)nSpendTime; // timestamp enforced after selection via wtx.nTime
     vector<pair<int64_t, pair<const CWalletTx*,unsigned int> > > vSorted;
     pair<int64_t, pair<const CWalletTx*,unsigned int> > coinLowestLarger;
     coinLowestLarger.first = std::numeric_limits<int64_t>::max();
@@ -1193,8 +1197,6 @@ static bool SelectCoinsGreedy(const vector<COutput>& vCoins, int64_t nTargetValu
     {
         const CWalletTx *pcoin = output.tx;
         if (output.nDepth < (pcoin->IsFromMe() ? nConfMine : nConfTheirs))
-            continue;
-        if (pcoin->nTime > nSpendTime)
             continue;
         int64_t n = pcoin->vout[output.i].nValue;
         if (n <= 0)
@@ -1209,7 +1211,7 @@ static bool SelectCoinsGreedy(const vector<COutput>& vCoins, int64_t nTargetValu
             vSorted.push_back(coin);
     }
 
-    // Exact or smallest single UTXO that covers the target
+    // Exact or smallest single UTXO that covers the target (best for size/fees)
     if (coinLowestLarger.second.first != NULL)
     {
         setCoinsRet.clear();
@@ -1225,6 +1227,8 @@ static bool SelectCoinsGreedy(const vector<COutput>& vCoins, int64_t nTargetValu
     BOOST_FOREACH(const PAIRTYPE(int64_t, PAIRTYPE(const CWalletTx*, unsigned int))& coin, vSorted)
     {
         if (nValueRet >= nTargetValue)
+            break;
+        if (setCoinsRet.size() >= nMaxInputs)
             break;
         if (coin.first > 0 && nValueRet > std::numeric_limits<int64_t>::max() - coin.first)
             break;
@@ -1263,6 +1267,7 @@ CBigNum CWallet::GetNewMint() const
 
 bool CWallet::SelectCoinsMinConf(int64_t nTargetValue, unsigned int nSpendTime, int nConfMine, int nConfTheirs, vector<COutput> vCoins, set<pair<const CWalletTx*,unsigned int> >& setCoinsRet, int64_t& nValueRet) const
 {
+    (void)nSpendTime; // timestamp enforced in CreateTransaction after selection
     setCoinsRet.clear();
     nValueRet = 0;
 
@@ -1284,9 +1289,10 @@ bool CWallet::SelectCoinsMinConf(int64_t nTargetValue, unsigned int nSpendTime, 
 
         int i = output.i;
 
-        // Follow the timestamp rules
-        if (pcoin->nTime > nSpendTime)
-            continue;
+        // Note: do not skip by pcoin->nTime here. CreateTransaction raises wtx.nTime
+        // to max(input times, adjusted time) so PPCoin timestamp rules still hold.
+        // Filtering here caused "Transaction creation failed" when balance listed
+        // coins that SelectCoins then rejected.
 
         int64_t n = pcoin->vout[i].nValue;
 
@@ -1446,16 +1452,27 @@ bool CWallet::SelectCoins(int64_t nTargetValue, unsigned int nSpendTime, set<pai
         return (nValueRet >= nTargetValue);
     }
 
+    // Prefer greedy largest-first: fewer inputs, stays under MAX_STANDARD_TX_SIZE,
+    // and works for wallets whose UTXO sum exceeds int64.
+    if (SelectCoinsGreedy(vCoins, nTargetValue, nSpendTime, 1, 10, setCoinsRet, nValueRet) ||
+        SelectCoinsGreedy(vCoins, nTargetValue, nSpendTime, 1, 1, setCoinsRet, nValueRet) ||
+        SelectCoinsGreedy(vCoins, nTargetValue, nSpendTime, 0, 1, setCoinsRet, nValueRet))
+        return true;
+
+    // Classic stochastic MinConf (better change minimisation on small wallets)
     if (SelectCoinsMinConf(nTargetValue, nSpendTime, 1, 10, vCoins, setCoinsRet, nValueRet) ||
         SelectCoinsMinConf(nTargetValue, nSpendTime, 1, 1, vCoins, setCoinsRet, nValueRet) ||
         SelectCoinsMinConf(nTargetValue, nSpendTime, 0, 1, vCoins, setCoinsRet, nValueRet))
-        return true;
+    {
+        // Reject oversized selections — fall through would have returned true with
+        // hundreds of dust inputs and CreateTransaction would fail with -4.
+        if (setCoinsRet.size() <= 200)
+            return true;
+    }
 
-    // Large-balance wallets: int64 summation in SelectCoinsMinConf can skip UTXOs and
-    // fail even when spendable value is sufficient — try largest-first greedy selection.
-    return SelectCoinsGreedy(vCoins, nTargetValue, nSpendTime, 1, 10, setCoinsRet, nValueRet) ||
-           SelectCoinsGreedy(vCoins, nTargetValue, nSpendTime, 1, 1, setCoinsRet, nValueRet) ||
-           SelectCoinsGreedy(vCoins, nTargetValue, nSpendTime, 0, 1, setCoinsRet, nValueRet);
+    setCoinsRet.clear();
+    nValueRet = 0;
+    return false;
 }
 
 // Select some coins without random shuffle or best subset approximation
@@ -1521,7 +1538,6 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
         return false;
 
     wtxNew.BindWallet(this);
-    // Ensure spend-time filter in SelectCoins sees current time (not a stale default)
     wtxNew.nTime = GetAdjustedTime();
 
     {
@@ -1530,11 +1546,13 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
         CTxDB txdb("r");
         {
             nFeeRet = nTransactionFee;
+            int nSizeFailRetries = 0;
             while (true)
             {
                 wtxNew.vin.clear();
                 wtxNew.vout.clear();
                 wtxNew.fFromMe = true;
+                reservekey.ReturnKey();
 
                 if (nFeeRet < 0 || (nFeeRet > 0 && nValue > std::numeric_limits<int64_t>::max() - nFeeRet))
                     return false;
@@ -1544,18 +1562,35 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
                 BOOST_FOREACH (const PAIRTYPE(CScript, int64_t)& s, vecSend)
                     wtxNew.vout.push_back(CTxOut(s.second, s.first));
 
-                // Choose coins to use
+                // Choose coins to use — pass max spend-time so MinConf does not drop UTXOs;
+                // we fix wtx.nTime after selection (PPCoin requires tx.nTime >= input nTime).
                 set<pair<const CWalletTx*,unsigned int> > setCoins;
                 int64_t nValueIn = 0;
-                if (!SelectCoins(nTotalValue, wtxNew.nTime, setCoins, nValueIn, coinControl))
+                unsigned int nSelectTime = std::numeric_limits<unsigned int>::max();
+                if (!SelectCoins(nTotalValue, nSelectTime, setCoins, nValueIn, coinControl))
                     return false;
+
+                if (nValueIn < nTotalValue)
+                    return false;
+
+                // PPCoin: transaction timestamp must not precede any input timestamp
+                unsigned int nMaxInputTime = 0;
                 BOOST_FOREACH(PAIRTYPE(const CWalletTx*, unsigned int) pcoin, setCoins)
                 {
+                    if (pcoin.first->nTime > nMaxInputTime)
+                        nMaxInputTime = pcoin.first->nTime;
                     int64_t nCredit = pcoin.first->vout[pcoin.second].nValue;
                     dPriority += (double)nCredit * pcoin.first->GetDepthInMainChain();
                 }
+                unsigned int nAdjusted = GetAdjustedTime();
+                wtxNew.nTime = max(nAdjusted, nMaxInputTime);
+                // Reject if inputs are too far in the future to be spendable yet
+                if (nMaxInputTime > FutureDrift(nAdjusted))
+                    return false;
 
                 int64_t nChange = nValueIn - nValue - nFeeRet;
+                if (nChange < 0)
+                    return false;
                 // if sub-cent change is required, the fee must be raised to at least MIN_TX_FEE
                 // or until nChange becomes zero
                 // NOTE: this depends on the exact behaviour of GetMinFee
@@ -1588,8 +1623,15 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
                         //  post-backup change.
 
                         // Reserve a new key pair from key pool
+                        // IMPORTANT: must not use assert() — NDEBUG/release builds strip asserts,
+                        // so GetReservedKey was never called and change went to an invalid key.
                         CPubKey vchPubKey;
-                        assert(reservekey.GetReservedKey(vchPubKey)); // should never fail, as we just unlocked
+                        if (!reservekey.GetReservedKey(vchPubKey))
+                        {
+                            TopUpKeyPool();
+                            if (!reservekey.GetReservedKey(vchPubKey))
+                                return error("CreateTransaction : Keypool ran out, please call keypoolrefill first");
+                        }
 
                         scriptChange.SetDestination(vchPubKey.GetID());
                     }
@@ -1609,12 +1651,24 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
                 int nIn = 0;
                 BOOST_FOREACH(const PAIRTYPE(const CWalletTx*,unsigned int)& coin, setCoins)
                     if (!SignSignature(*this, *coin.first, wtxNew, nIn++))
-                        return false;
+                        return error("CreateTransaction : SignSignature failed");
 
-                // Limit size
+                // Limit size — if too many small inputs, retry once with greedy-only via fee bump
+                // is not enough; fail clearly after a couple of attempts
                 unsigned int nBytes = ::GetSerializeSize(*(CTransaction*)&wtxNew, SER_NETWORK, PROTOCOL_VERSION);
                 if (nBytes >= MAX_STANDARD_TX_SIZE)
-                    return false;
+                {
+                    if (++nSizeFailRetries < 3 && setCoins.size() > 1)
+                    {
+                        // Force higher fee iteration which re-selects; also try shrinking by
+                        // requiring the selection to meet target with fewer coins next loop
+                        // by bumping fee slightly so SelectCoins is called again. Real fix is
+                        // SelectCoinsGreedy max-inputs; if still oversized, give up.
+                        nFeeRet = max(nFeeRet + MIN_TX_FEE, nFeeRet);
+                        continue;
+                    }
+                    return error("CreateTransaction : transaction too large, try sending a smaller amount or consolidating UTXOs");
+                }
                 dPriority /= nBytes;
 
                 // Check that enough fee is included
@@ -1623,7 +1677,11 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
 
                 if (nFeeRet < max(nPayFee, nMinFee))
                 {
-                    nFeeRet = max(nPayFee, nMinFee);
+                    int64_t nNewFee = max(nPayFee, nMinFee);
+                    // Guard absurd fees (e.g. overflowed GetMinFee)
+                    if (nNewFee < 0 || nNewFee > nValue + nTransactionFee * 1000)
+                        return error("CreateTransaction : unreasonable fee required");
+                    nFeeRet = nNewFee;
                     continue;
                 }
 
@@ -2004,11 +2062,9 @@ string CWallet::SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNe
         string strError;
         if (CBigNum(nValue) + CBigNum(nFeeRequired) > GetBalance())
             strError = strprintf(_("Error: This transaction requires a transaction fee of at least %s because of its amount, complexity, or use of recently received funds  "), FormatMoney(nFeeRequired).c_str());
-        else if (nValue > std::numeric_limits<int64_t>::max() / 2)
-            strError = _("Error: Transaction creation failed — amount is too large to fund with available UTXOs in a single transaction. Try sending a smaller amount.");
         else
-            strError = _("Error: Transaction creation failed  ");
-        printf("SendMoney() : %s", strError.c_str());
+            strError = _("Error: Transaction creation failed. Unlock the wallet (not staking-only), ensure the keypool is topped up (keypoolrefill), and try a smaller amount if you have many small UTXOs.");
+        printf("SendMoney() : %s\n", strError.c_str());
         return strError;
     }
 

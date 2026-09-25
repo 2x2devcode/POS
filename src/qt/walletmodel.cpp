@@ -235,6 +235,11 @@ WalletModel::SendCoinsReturn WalletModel::sendCoins(const QList<SendCoinsRecipie
     {
         LOCK2(cs_main, wallet->cs_wallet);
 
+        if (wallet->IsLocked())
+            return TransactionCreationFailed;
+        if (fWalletUnlockStakingOnly)
+            return TransactionCreationFailed;
+
         // Sendmany
         std::vector<std::pair<CScript, int64_t> > vecSend;
         foreach(const SendCoinsRecipient &rcp, recipients)
